@@ -138,7 +138,8 @@ object Commands {
         val title = args.optString("title", "دستیار من").ifEmpty { "دستیار من" }.take(80)
         val text = args.optString("text", "").take(300)
         if (Build.VERSION.SDK_INT >= 33 && !has(ctx, Manifest.permission.POST_NOTIFICATIONS)) {
-            return Pair(false, "مجوز اعلان داده نشده — در اپ، مجوز Notification را بده")
+            requestPermission(ctx, Manifest.permission.POST_NOTIFICATIONS)
+            return Pair(false, "برای نمایش اعلان، درخواست مجوز نمایش داده شد؛ پس از تأیید، عملیات را دوباره اجرا کن")
         }
         val nm = ctx.getSystemService(NotificationManager::class.java) ?: return Pair(false, "NotificationManager در دسترس نیست")
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
