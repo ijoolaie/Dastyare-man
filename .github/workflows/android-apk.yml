@@ -54,6 +54,10 @@ jobs:
         working-directory: android-app
         run: gradle --no-daemon clean assembleDebug
 
+      - name: Verify APK signature
+        run: |
+          "$env:ANDROID_HOME/build-tools/34.0.0/apksigner" verify --verbose --print-certs android-app/app/build/outputs/apk/debug/app-debug.apk
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
