@@ -40,6 +40,10 @@ class MainActivity : AppCompatActivity() {
         /** آدرس پیش‌فرض اپ «دستیار من» — در صفحه جفت‌سازی قابل ویرایش است */
         const val DEFAULT_SERVER_URL =
             "https://preview-chat-cec4d141-d1d4-4c9b-8a88-8642856002be.space-z.ai"
+        const val ACTION_REQUEST_PERMISSION = "ir.dastyar.bridge.REQUEST_PERMISSION"
+        const val EXTRA_PERMISSION = "permission"
+        private const val PERMISSION_PREFS = "permission_prompts"
+        private const val PENDING_PERMISSION = "pending_permission"
     }
 
     private lateinit var pairingView: ScrollView
@@ -56,12 +60,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    companion object {
-        const val ACTION_REQUEST_PERMISSION = "ir.dastyar.bridge.REQUEST_PERMISSION"
-        const val EXTRA_PERMISSION = "permission"
-        private const val PERMISSION_PREFS = "permission_prompts"
-        private const val PENDING_PERMISSION = "pending_permission"
-    }
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -199,22 +197,6 @@ class MainActivity : AppCompatActivity() {
 
     // ── مجوزها ───────────────────────────────────────────────────
 
-    private fun requestRuntimePermissions() {
-        val wanted = mutableListOf(
-            Manifest.permission.SEND_SMS,
-            Manifest.permission.READ_SMS,
-            Manifest.permission.READ_CONTACTS,
-            Manifest.permission.CALL_PHONE,
-            Manifest.permission.ACCESS_FINE_LOCATION,
-            Manifest.permission.ACCESS_COARSE_LOCATION,
-        )
-        if (Build.VERSION.SDK_INT >= 33) wanted.add(Manifest.permission.POST_NOTIFICATIONS)
-        val need = wanted.filter {
-            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
-        }
-        if (need.isNotEmpty()) ActivityCompat.requestPermissions(this, need.toTypedArray(), 1001)
-    }
-
     private fun askNotificationAccess() {
         AlertDialog.Builder(this)
             .setTitle("دسترسی نوتیفیکیشن")
@@ -237,7 +219,6 @@ class MainActivity : AppCompatActivity() {
             "تغییر اتصال (سرور یا توکن دیگر)",
             "دسترسی نوتیفیکیشن‌ها",
             "غیرفعال‌کردن بهینه‌سازی باتری",
-            "بررسی مجوز درخواستی",
         )
         AlertDialog.Builder(this)
             .setTitle("تنظیمات پل")
@@ -263,7 +244,6 @@ class MainActivity : AppCompatActivity() {
                     } catch (e: Exception) {
                         toast("این گزینه در این دستگاه موجود نیست")
                     }
-                    3 -> onResume()
                 }
             }
             .show()
