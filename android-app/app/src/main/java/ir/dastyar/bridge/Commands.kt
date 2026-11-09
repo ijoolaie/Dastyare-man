@@ -249,6 +249,7 @@ object Commands {
                 "• [${it["app"]}] ${it["title"]}${if (!it["text"].isNullOrEmpty()) " — ${it["text"]}" else ""} (${it["time"]})"
             }
         )
+        */
     }
 
     // ── موزیک و صدا ──────────────────────────────────────────────
