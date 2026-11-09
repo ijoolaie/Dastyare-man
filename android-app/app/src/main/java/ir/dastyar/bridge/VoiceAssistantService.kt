@@ -3,10 +3,13 @@ package ir.dastyar.bridge
 import android.app.*
 import android.content.Intent
 import android.os.*
-import android.speech.*
 import android.speech.tts.*
 import androidx.core.app.NotificationCompat
 import org.json.*
+import org.vosk.Model
+import org.vosk.Recognizer
+import org.vosk.android.RecognitionListener
+import org.vosk.android.SpeechService
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
@@ -20,25 +23,38 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val NOTIFICATION_ID = 43
         private const val SESSION_MS = 45_000L
     }
+
     private val handler = Handler(Looper.getMainLooper())
-    private var recognizer: SpeechRecognizer? = null
+    private var model: Model? = null
+    private var recognizer: Recognizer? = null
+    private var speechService: SpeechService? = null
+    private var modelLoader: Thread? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
-    private var listening = false
+    private var pendingSpeech: String? = null
     private var busy = false
     private var activeUntil = 0L
     private var conversationId: String? = null
-    private var destroyed = false
+    @Volatile private var destroyed = false
+
+    private val voskListener = object : RecognitionListener {
+        override fun onPartialResult(hypothesis: String?) {}
+        override fun onResult(hypothesis: String?) {
+            val text = try { JSONObject(hypothesis ?: "{}").optString("text") } catch (_: Exception) { "" }
+            handleRecognized(text)
+        }
+        override fun onFinalResult(hypothesis: String?) {}
+        override fun onError(exception: Exception?) {
+            handler.post { if (!destroyed) updateNotification("خطای میکروفون: " + (exception?.message ?: "نامشخص")) }
+        }
+        override fun onTimeout() {}
+    }
 
     override fun onCreate() {
         super.onCreate()
         foreground()
         tts = TextToSpeech(this, this)
-        if (SpeechRecognizer.isRecognitionAvailable(this)) {
-            recognizer = SpeechRecognizer.createSpeechRecognizer(this)
-            recognizer?.setRecognitionListener(listener)
-            scheduleListen(800)
-        } else updateNotification("سرویس تشخیص گفتار در دسترس نیست")
+        loadModelAsync()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -47,73 +63,81 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (speechService == null && modelLoader == null && !destroyed) loadModelAsync()
         return START_STICKY
     }
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onInit(status: Int) {
-        ttsReady = status == TextToSpeech.SUCCESS
+        if (status != TextToSpeech.SUCCESS) {
+            updateNotification("موتور تبدیل متن به گفتار در دسترس نیست")
+            return
+        }
+        var language = tts?.setLanguage(Locale("fa", "IR")) ?: TextToSpeech.LANG_NOT_SUPPORTED
+        if (language < TextToSpeech.LANG_AVAILABLE)
+            language = tts?.setLanguage(Locale("fa")) ?: TextToSpeech.LANG_NOT_SUPPORTED
+        ttsReady = language >= TextToSpeech.LANG_AVAILABLE
         if (ttsReady) {
-            val result = tts?.setLanguage(Locale("fa", "IR"))
-            if (result == TextToSpeech.LANG_MISSING_DATA || result == TextToSpeech.LANG_NOT_SUPPORTED)
-                tts?.setLanguage(Locale("fa"))
-            tts?.setSpeechRate(1f)
+            tts?.setSpeechRate(1.0f)
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(id: String?) {}
                 override fun onError(id: String?) { handler.post { resumeListening() } }
                 override fun onDone(id: String?) { handler.post { resumeListening() } }
             })
-        }
+            pendingSpeech?.let { pendingSpeech = null; speak(it) }
+        } else updateNotification("صدای فارسی نصب نیست؛ زبان فارسی را در تنظیمات Text-to-Speech نصب کن")
     }
 
-    private val listener = object : RecognitionListener {
-        override fun onReadyForSpeech(params: Bundle?) { listening = true; updateNotification("برای بیدار کردن بگو «رایا»") }
-        override fun onBeginningOfSpeech() { updateNotification("صدایت را می‌شنوم…") }
-        override fun onRmsChanged(rmsdB: Float) {}
-        override fun onBufferReceived(buffer: ByteArray?) {}
-        override fun onEndOfSpeech() { listening = false }
-        override fun onError(error: Int) {
-            listening = false
-            if (!destroyed && !busy) scheduleListen(if (error == SpeechRecognizer.ERROR_RECOGNIZER_BUSY) 1200 else 650)
-        }
-        override fun onResults(results: Bundle?) {
-            listening = false
-            handleRecognized(results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)?.firstOrNull().orEmpty())
-        }
-        override fun onPartialResults(partialResults: Bundle?) {}
-        override fun onEvent(eventType: Int, params: Bundle?) {}
-    }
-
-    private fun scheduleListen(delay: Long) {
-        handler.removeCallbacks(listenRunnable)
-        if (!destroyed && !busy) handler.postDelayed(listenRunnable, delay)
-    }
-    private val listenRunnable = Runnable { startListening() }
-
-    private fun startListening() {
-        if (destroyed || busy || listening || recognizer == null) return
-        try {
-            val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE, "fa-IR")
-                putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "fa-IR")
-                putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, false)
-                putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
-                putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, false)
-                putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, packageName)
+    private fun loadModelAsync() {
+        if (modelLoader != null || speechService != null || destroyed) return
+        updateNotification("آماده‌سازی تشخیص گفتار فارسی…")
+        modelLoader = Thread {
+            var loadedModel: Model? = null
+            var loadedRecognizer: Recognizer? = null
+            var loadedSpeech: SpeechService? = null
+            try {
+                val dir = VoskModelInstaller.ensureModel(this,
+                    { percent -> handler.post { if (!destroyed) updateNotification("دریافت مدل فارسی: $percent٪") } },
+                    { destroyed || Thread.currentThread().isInterrupted })
+                if (destroyed) return@Thread
+                handler.post { updateNotification("بارگذاری مدل فارسی…") }
+                val createdModel = Model(dir.absolutePath)
+                loadedModel = createdModel
+                val createdRecognizer = Recognizer(createdModel, 16_000.0f)
+                loadedRecognizer = createdRecognizer
+                val createdSpeech = SpeechService(createdRecognizer, 16_000.0f)
+                loadedSpeech = createdSpeech
+                handler.post {
+                    if (destroyed) {
+                        try { loadedSpeech?.stop(); loadedSpeech?.shutdown(); loadedRecognizer?.close(); loadedModel?.close() } catch (_: Exception) {}
+                        return@post
+                    }
+                    model = loadedModel
+                    recognizer = loadedRecognizer
+                    speechService = loadedSpeech
+                    modelLoader = null
+                    speechService?.startListening(voskListener)
+                    updateNotification("رایا آماده شنیدن است؛ بگو «رایا»")
+                }
+            } catch (e: Exception) {
+                try { loadedSpeech?.stop(); loadedSpeech?.shutdown(); loadedRecognizer?.close(); loadedModel?.close() } catch (_: Exception) {}
+                handler.post {
+                    modelLoader = null
+                    if (!destroyed) updateNotification("آماده‌سازی مدل فارسی ناموفق بود؛ برنامه را دوباره باز کن. " + (e.message ?: ""))
+                }
             }
-            recognizer?.startListening(intent)
-        } catch (_: Exception) { listening = false; scheduleListen(1800) }
+        }.apply { name = "raya-vosk-model-loader"; start() }
     }
 
-    private fun normalize(s: String) = s.replace('ي','ی').replace('ك','ک').replace("ـ","")
+    private fun normalize(s: String) = s.replace('ي', 'ی').replace('ك', 'ک').replace("ـ", "")
         .replace(Regex("[\\u064B-\\u065F]"), "").replace(Regex("[،؛.!؟?]"), " ")
         .replace(Regex("\\s+"), " ").trim()
 
     private fun handleRecognized(raw: String) {
         if (destroyed || busy) return
         val text = normalize(raw)
-        if (text.isBlank()) { scheduleListen(350); return }
+        if (text.isBlank()) return
         val wake = text.indexOf("رایا")
         if (wake >= 0) {
             activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
@@ -122,24 +146,25 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         } else if (SystemClock.elapsedRealtime() < activeUntil) {
             activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
             sendToChat(text)
-        } else scheduleListen(350)
+        }
     }
 
     private fun speak(text: String) {
-        if (!ttsReady || text.isBlank()) { scheduleListen(500); return }
+        if (!ttsReady) { pendingSpeech = text; updateNotification("پاسخ آماده است؛ صدای فارسی در حال آماده‌سازی"); return }
+        if (text.isBlank()) { resumeListening(); return }
         busy = true
+        speechService?.setPause(true)
         updateNotification("رایا در حال پاسخ‌گویی است")
-        val clean = text.replace(Regex("\\x60\\x60\\x60[\\s\\S]*?\\x60\\x60\\x60"), " ")
-            .replace(Regex("https?://\\S+"), " ").replace(Regex("[#*_>|]"), " ")
+        val clean = text.replace(Regex("https?://\\S+"), " ").replace(Regex("[#*_>|]"), " ")
             .replace(Regex("\\s+"), " ").trim().take(3500)
-        tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString())
+        if (tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString()) == TextToSpeech.ERROR)
+            resumeListening()
     }
 
     private fun sendToChat(message: String) {
         if (busy) return
         busy = true
-        listening = false
-        try { recognizer?.cancel() } catch (_: Exception) {}
+        speechService?.setPause(true)
         updateNotification("در حال دریافت پاسخ از رایا…")
         Thread {
             var answer = ""
@@ -179,7 +204,11 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }.apply { name = "raya-chat-request"; start() }
     }
 
-    private fun resumeListening() { busy = false; if (!destroyed) scheduleListen(450) }
+    private fun resumeListening() {
+        busy = false
+        speechService?.setPause(false)
+        if (!destroyed) updateNotification("رایا آماده شنیدن است؛ بگو «رایا»")
+    }
 
     private fun foreground() {
         val nm = getSystemService(NotificationManager::class.java)
@@ -190,8 +219,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         val stop = PendingIntent.getService(this, 2, Intent(this, VoiceAssistantService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         startForeground(NOTIFICATION_ID, NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_app).setContentTitle("رایا آماده شنیدن است")
-            .setContentText("برای شروع مکالمه بگو «رایا»").setOngoing(true).setContentIntent(open)
+            .setSmallIcon(R.drawable.ic_app).setContentTitle("دستیار صوتی رایا")
+            .setContentText("آماده‌سازی شنود فارسی…").setOngoing(true).setContentIntent(open)
             .addAction(android.R.drawable.ic_media_pause, "توقف شنود", stop).build())
     }
 
@@ -208,9 +237,9 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         destroyed = true
-        handler.removeCallbacksAndMessages(null)
-        try { recognizer?.cancel(); recognizer?.destroy() } catch (_: Exception) {}
-        recognizer = null
+        try { modelLoader?.interrupt() } catch (_: Exception) {}
+        try { speechService?.stop(); speechService?.shutdown(); recognizer?.close(); model?.close() } catch (_: Exception) {}
+        speechService = null; recognizer = null; model = null
         try { tts?.stop(); tts?.shutdown() } catch (_: Exception) {}
         tts = null
         super.onDestroy()
