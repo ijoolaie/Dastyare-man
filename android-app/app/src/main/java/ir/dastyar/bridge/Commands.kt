@@ -43,6 +43,16 @@ object Commands {
     fun has(ctx: Context, perm: String): Boolean =
         ContextCompat.checkSelfPermission(ctx, perm) == PackageManager.PERMISSION_GRANTED
 
+    private fun requestPermission(ctx: Context, permission: String) {
+        ctx.getSharedPreferences("permission_prompts", Context.MODE_PRIVATE)
+            .edit().putString("pending_permission", permission).apply()
+        ctx.sendBroadcast(
+            Intent(MainActivity.ACTION_REQUEST_PERMISSION)
+                .setPackage(ctx.packageName)
+                .putExtra(MainActivity.EXTRA_PERMISSION, permission)
+        )
+    }
+
     fun execute(ctx: Context, action: String, args: JSONObject): Pair<Boolean, String> {
         return try {
             when (action) {
@@ -298,7 +308,8 @@ object Commands {
     @SuppressLint("MissingPermission")
     private fun location(ctx: Context): Pair<Boolean, String> {
         if (!has(ctx, Manifest.permission.ACCESS_FINE_LOCATION) && !has(ctx, Manifest.permission.ACCESS_COARSE_LOCATION)) {
-            return Pair(false, "مجوز موقعیت مکانی داده نشده — در اپ مجوز Location را بده")
+            requestPermission(ctx, Manifest.permission.ACCESS_FINE_LOCATION)
+            return Pair(false, "برای استفاده از موقعیت مکانی، درخواست مجوز نمایش داده شد؛ پس از تأیید، عملیات را دوباره اجرا کن")
         }
         val lm = ctx.getSystemService(Context.LOCATION_SERVICE) as? LocationManager ?: return Pair(false, "LocationManager در دسترس نیست")
         for (p in listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)) {
@@ -323,7 +334,10 @@ object Commands {
 
     @SuppressLint("MissingPermission")
     private fun smsSend(ctx: Context, args: JSONObject): Pair<Boolean, String> {
-        if (!has(ctx, Manifest.permission.SEND_SMS)) return Pair(false, "مجوز ارسال پیامک داده نشده — در اپ مجوز SMS را بده")
+        if (!has(ctx, Manifest.permission.SEND_SMS)) {
+            requestPermission(ctx, Manifest.permission.SEND_SMS)
+            return Pair(false, "برای ارسال پیامک، درخواست مجوز نمایش داده شد؛ پس از تأیید، عملیات را دوباره اجرا کن")
+        }
         val to = args.optString("to", "").trim()
         val text = args.optString("text", "").trim()
         if (to.isEmpty() || text.isEmpty()) return Pair(false, "پارامترهای to و text الزامی است")
@@ -345,7 +359,10 @@ object Commands {
 
     @SuppressLint("MissingPermission")
     private fun smsRead(ctx: Context, args: JSONObject): Pair<Boolean, String> {
-        if (!has(ctx, Manifest.permission.READ_SMS)) return Pair(false, "مجوز خواندن پیامک داده نشده — در اپ مجوز SMS را بده")
+        if (!has(ctx, Manifest.permission.READ_SMS)) {
+            requestPermission(ctx, Manifest.permission.READ_SMS)
+            return Pair(false, "برای خواندن پیامک، درخواست مجوز نمایش داده شد؛ پس از تأیید، عملیات را دوباره اجرا کن")
+        }
         val limit = args.optInt("limit", 10).coerceIn(1, 30)
         val fmt = SimpleDateFormat("MM/dd HH:mm", Locale.US)
         val out = mutableListOf<String>()
@@ -372,7 +389,10 @@ object Commands {
 
     @SuppressLint("MissingPermission")
     private fun contacts(ctx: Context, args: JSONObject): Pair<Boolean, String> {
-        if (!has(ctx, Manifest.permission.READ_CONTACTS)) return Pair(false, "مجوز مخاطبین داده نشده — در اپ مجوز Contacts را بده")
+        if (!has(ctx, Manifest.permission.READ_CONTACTS)) {
+            requestPermission(ctx, Manifest.permission.READ_CONTACTS)
+            return Pair(false, "برای دسترسی به مخاطبین، درخواست مجوز نمایش داده شد؛ پس از تأیید، عملیات را دوباره اجرا کن")
+        }
         val limit = args.optInt("limit", 10).coerceIn(1, 50)
         val q = args.optString("query", "").trim()
         val where = if (q.isEmpty()) null else "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?"
