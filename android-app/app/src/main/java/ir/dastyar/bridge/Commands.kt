@@ -235,6 +235,8 @@ object Commands {
     // ── نوتیفیکیشن‌ها ────────────────────────────────────────────
 
     private fun notifications(args: JSONObject): Pair<Boolean, String> {
+        return Pair(false, "خواندن اعلان‌های سایر برنامه‌ها موقتاً در نسخه نصب مستقیم غیرفعال است؛ قابلیت برای بازگردانی حفظ شده است")
+        /* ORIGINAL IMPLEMENTATION:
         if (!NotificationListener.connected) {
             return Pair(false, "دسترسی خواندن نوتیفیکیشن فعال نیست — در تنظیمات اندروید: Settings › Notification access › دستیار من")
         }
@@ -335,31 +337,25 @@ object Commands {
 
     @SuppressLint("MissingPermission")
     private fun smsSend(ctx: Context, args: JSONObject): Pair<Boolean, String> {
-        if (!has(ctx, Manifest.permission.SEND_SMS)) {
-            requestPermission(ctx, Manifest.permission.SEND_SMS)
-            return Pair(false, "برای ارسال پیامک، درخواست مجوز نمایش داده شد؛ پس از تأیید، عملیات را دوباره اجرا کن")
-        }
+        // Direct-install build: user reviews and sends through the SMS composer.
         val to = args.optString("to", "").trim()
         val text = args.optString("text", "").trim()
         if (to.isEmpty() || text.isEmpty()) return Pair(false, "پارامترهای to و text الزامی است")
-        val sm: SmsManager? = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            ctx.getSystemService(SmsManager::class.java)
-        } else {
-            @Suppress("DEPRECATION")
-            SmsManager.getDefault()
+        return try {
+            val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${Uri.encode(to)}"))
+                .putExtra("sms_body", text)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(intent)
+            Pair(true, "برنامه پیامک با شماره و متن آماده باز شد؛ ارسال نهایی را خودت تأیید کن")
+        } catch (e: Exception) {
+            Pair(false, "برنامه پیامک در دسترس نیست: ${e.message ?: "خطای نامشخص"}")
         }
-        if (sm == null) return Pair(false, "SmsManager در دسترس نیست")
-        val parts = sm.divideMessage(text)
-        if (parts.size <= 1) {
-            sm.sendTextMessage(to, null, text, null, null)
-        } else {
-            sm.sendMultipartTextMessage(to, null, parts, null, null)
-        }
-        return Pair(true, "پیامک به $to ارسال شد: «${text.take(60)}»")
     }
 
     @SuppressLint("MissingPermission")
     private fun smsRead(ctx: Context, args: JSONObject): Pair<Boolean, String> {
+        return Pair(false, "خواندن صندوق پیامک موقتاً در نسخه نصب مستقیم غیرفعال است؛ قابلیت برای بازگردانی حفظ شده است")
+        /* ORIGINAL IMPLEMENTATION:
         if (!has(ctx, Manifest.permission.READ_SMS)) {
             requestPermission(ctx, Manifest.permission.READ_SMS)
             return Pair(false, "برای خواندن پیامک، درخواست مجوز نمایش داده شد؛ پس از تأیید، عملیات را دوباره اجرا کن")
@@ -384,6 +380,7 @@ object Commands {
         }
         return if (out.isEmpty()) Pair(true, "پیامکی در صندوق ورودی پیدا نشد")
         else Pair(true, "${out.size} پیامک اخیر:\n${out.joinToString("\n")}")
+        */
     }
 
     // ── مخاطبین ──────────────────────────────────────────────────
