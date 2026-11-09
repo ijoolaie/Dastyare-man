@@ -10,6 +10,9 @@ class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action == Intent.ACTION_BOOT_COMPLETED && Prefs.isPaired(context)) {
             ContextCompat.startForegroundService(context, Intent(context, BridgeService::class.java))
+            if (Prefs.isVoiceEnabled(context) && androidx.core.content.ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED) {
+                try { ContextCompat.startForegroundService(context, Intent(context, VoiceAssistantService::class.java)) } catch (_: Exception) { }
+            }
         }
     }
 }

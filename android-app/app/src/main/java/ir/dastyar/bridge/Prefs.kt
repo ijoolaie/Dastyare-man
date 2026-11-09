@@ -7,6 +7,7 @@ object Prefs {
     private const val FILE = "bridge_prefs"
     private const val KEY_SERVER = "server_url"
     private const val KEY_TOKEN = "device_token"
+    private const val KEY_VOICE_ENABLED = "voice_enabled"
 
     private fun sp(c: Context) = c.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 
@@ -15,6 +16,9 @@ object Prefs {
     fun token(c: Context): String = sp(c).getString(KEY_TOKEN, "") ?: ""
 
     fun isPaired(c: Context): Boolean = serverUrl(c).isNotEmpty() && token(c).isNotEmpty()
+
+    fun isVoiceEnabled(c: Context): Boolean = sp(c).getBoolean(KEY_VOICE_ENABLED, false)
+    fun setVoiceEnabled(c: Context, enabled: Boolean) { sp(c).edit().putBoolean(KEY_VOICE_ENABLED, enabled).apply() }
 
     fun save(c: Context, serverUrl: String, token: String) {
         sp(c).edit()

@@ -120,7 +120,16 @@ class MainActivity : AppCompatActivity() {
     @Deprecated("Deprecated in Java")
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 1002) {
+        if (requestCode == 1003) {
+            if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
+                Prefs.setVoiceEnabled(this, true)
+                ContextCompat.startForegroundService(this, Intent(this, VoiceAssistantService::class.java))
+                toast("دستیار صوتی رایا فعال شد؛ بگو رایا")
+            } else {
+                Prefs.setVoiceEnabled(this, false)
+                toast("برای فعال شدن بیدارباش رایا، مجوز میکروفون لازم است")
+            }
+        } else if (requestCode == 1002) {
             toast(if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) "مجوز فعال شد؛ عملیات را دوباره اجرا کن" else "مجوز داده نشد؛ این قابلیت در دسترس نیست")
         }
     }
@@ -136,7 +145,17 @@ class MainActivity : AppCompatActivity() {
         webView.visibility = View.VISIBLE
         btnSettings.visibility = View.VISIBLE
         ContextCompat.startForegroundService(this, Intent(this, BridgeService::class.java))
+        enableVoiceAssistantIfAllowed()
         webView.loadUrl(Prefs.serverUrl(this))
+    }
+
+    private fun enableVoiceAssistantIfAllowed() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
+            Prefs.setVoiceEnabled(this, true)
+            ContextCompat.startForegroundService(this, Intent(this, VoiceAssistantService::class.java))
+        } else {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1003)
+        }
     }
 
     private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
