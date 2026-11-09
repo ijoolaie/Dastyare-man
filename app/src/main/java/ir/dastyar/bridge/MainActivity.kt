@@ -1,0 +1,224 @@
+package ir.dastyar.bridge
+
+import android.Manifest
+import android.annotation.SuppressLint
+import android.app.AlertDialog
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
+import android.os.Bundle
+import android.provider.Settings
+import android.view.View
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import android.widget.Button
+import android.widget.EditText
+import android.widget.ImageButton
+import android.widget.ScrollView
+import android.widget.Toast
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.app.ActivityCompat
+import androidx.core.content.ContextCompat
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.URL
+import java.nio.charset.StandardCharsets
+
+/**
+ * اکتیویتی اصلی — دو حالت:
+ * ۱) جفت‌سازی: وارد کردن آدرس سرور + توکن (از تب «دستگاه‌ها» اپ وب)
+ * ۲) اپ: نمایش همان اپ وب داخل WebView + اجرای سرویس پل در پس‌زمینه
+ */
+class MainActivity : AppCompatActivity() {
+
+    companion object {
+        /** آدرس پیش‌فرض اپ «دستیار من» — در صفحه جفت‌سازی قابل ویرایش است */
+        const val DEFAULT_SERVER_URL =
+            "https://preview-chat-cec4d141-d1d4-4c9b-8a88-8642856002be.space-z.ai"
+    }
+
+    private lateinit var pairingView: ScrollView
+    private lateinit var webView: WebView
+    private lateinit var etServer: EditText
+    private lateinit var etToken: EditText
+    private lateinit var btnConnect: Button
+    private lateinit var btnSettings: ImageButton
+
+    @SuppressLint("SetJavaScriptEnabled")
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContentView(R.layout.activity_main)
+
+        pairingView = findViewById(R.id.pairing)
+        webView = findViewById(R.id.webview)
+        etServer = findViewById(R.id.etServer)
+        etToken = findViewById(R.id.etToken)
+        btnConnect = findViewById(R.id.btnConnect)
+        btnSettings = findViewById(R.id.btnSettings)
+
+        etServer.setText(Prefs.serverUrl(this).ifEmpty { DEFAULT_SERVER_URL })
+        btnConnect.setOnClickListener { connect() }
+        btnSettings.setOnClickListener { openSettings() }
+
+        webView.settings.javaScriptEnabled = true
+        webView.settings.domStorageEnabled = true
+        webView.webViewClient = WebViewClient()
+
+        if (Prefs.isPaired(this)) showApp() else showPairing()
+        requestRuntimePermissions()
+    }
+
+    private fun showPairing() {
+        pairingView.visibility = View.VISIBLE
+        webView.visibility = View.GONE
+        btnSettings.visibility = View.GONE
+    }
+
+    private fun showApp() {
+        pairingView.visibility = View.GONE
+        webView.visibility = View.VISIBLE
+        btnSettings.visibility = View.VISIBLE
+        ContextCompat.startForegroundService(this, Intent(this, BridgeService::class.java))
+        webView.loadUrl(Prefs.serverUrl(this))
+    }
+
+    private fun toast(msg: String) = Toast.makeText(this, msg, Toast.LENGTH_LONG).show()
+
+    // ── جفت‌سازی ─────────────────────────────────────────────────
+
+    private fun connect() {
+        val server = etServer.text.toString().trim().trimEnd('/')
+        val token = etToken.text.toString().trim()
+        if (!server.startsWith("http")) {
+            toast("آدرس سرور باید با http شروع شود")
+            return
+        }
+        if (token.isEmpty()) {
+            toast("توکن را از تب «دستگاه‌ها» کپی کن")
+            return
+        }
+        btnConnect.isEnabled = false
+        btnConnect.text = "در حال اتصال…"
+
+        Thread {
+            var ok = false
+            var err = ""
+            try {
+                val body = JSONObject()
+                    .put("token", token)
+                    .put("os", "Android ${Build.VERSION.RELEASE} · اپ اختصاصی")
+                    .put("hostname", Build.MODEL)
+                    .put("capabilities", JSONArray(BridgeService.CAPS))
+                val conn = URL("$server/api/devices/register").openConnection() as HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.connectTimeout = 15_000
+                conn.readTimeout = 20_000
+                conn.doOutput = true
+                conn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                conn.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
+                val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
+                val text = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() } ?: ""
+                val resp = JSONObject(text)
+                ok = conn.responseCode in 200..299 && resp.optBoolean("ok", false)
+                if (!ok) err = resp.optString("error", "HTTP ${conn.responseCode}")
+            } catch (e: Exception) {
+                err = e.message ?: "خطای شبکه"
+            }
+            runOnUiThread {
+                btnConnect.isEnabled = true
+                btnConnect.text = getString(R.string.btn_connect)
+                if (ok) {
+                    Prefs.save(this, server, token)
+                    toast("متصل شد ✅")
+                    showApp()
+                    askNotificationAccess()
+                } else {
+                    toast("اتصال ناموفق: $err")
+                }
+            }
+        }.start()
+    }
+
+    // ── مجوزها ───────────────────────────────────────────────────
+
+    private fun requestRuntimePermissions() {
+        val wanted = mutableListOf(
+            Manifest.permission.SEND_SMS,
+            Manifest.permission.READ_SMS,
+            Manifest.permission.READ_CONTACTS,
+            Manifest.permission.CALL_PHONE,
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+        )
+        if (Build.VERSION.SDK_INT >= 33) wanted.add(Manifest.permission.POST_NOTIFICATIONS)
+        val need = wanted.filter {
+            ContextCompat.checkSelfPermission(this, it) != PackageManager.PERMISSION_GRANTED
+        }
+        if (need.isNotEmpty()) ActivityCompat.requestPermissions(this, need.toTypedArray(), 1001)
+    }
+
+    private fun askNotificationAccess() {
+        AlertDialog.Builder(this)
+            .setTitle("دسترسی نوتیفیکیشن")
+            .setMessage("برای اینکه دستیار نوتیفیکیشن‌های گوشی را بخواند، در صفحه بعدی به «دستیار من» اجازه بده. (اختیاری اما توصیه‌شده)")
+            .setPositiveButton("باز کردن تنظیمات") { _, _ ->
+                try {
+                    startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                } catch (e: Exception) {
+                    // منو در این دستگاه موجود نیست
+                }
+            }
+            .setNegativeButton("بعداً", null)
+            .show()
+    }
+
+    // ── منوی تنظیمات ─────────────────────────────────────────────
+
+    private fun openSettings() {
+        val options = arrayOf(
+            "تغییر اتصال (سرور یا توکن دیگر)",
+            "دسترسی نوتیفیکیشن‌ها",
+            "غیرفعال‌کردن بهینه‌سازی باتری",
+            "درخواست دوباره مجوزها",
+        )
+        AlertDialog.Builder(this)
+            .setTitle("تنظیمات پل")
+            .setItems(options) { _, which ->
+                when (which) {
+                    0 -> {
+                        stopService(Intent(this, BridgeService::class.java))
+                        Prefs.clear(this)
+                        recreate()
+                    }
+                    1 -> try {
+                        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                    } catch (e: Exception) {
+                        // منو در این دستگاه موجود نیست
+                    }
+                    2 -> try {
+                        startActivity(
+                            Intent(
+                                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                                Uri.parse("package:$packageName")
+                            )
+                        )
+                    } catch (e: Exception) {
+                        toast("این گزینه در این دستگاه موجود نیست")
+                    }
+                    3 -> requestRuntimePermissions()
+                }
+            }
+            .show()
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        if (webView.visibility == View.VISIBLE && webView.canGoBack()) {
+            webView.goBack()
+        } else {
+            super.onBackPressed()
+        }
+    }
+}
