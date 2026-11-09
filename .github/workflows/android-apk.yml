@@ -45,7 +45,9 @@ jobs:
           fi
           echo "${SDK_ROOT}/platform-tools" >> "${GITHUB_PATH}"
           echo "$(dirname "${SDKMANAGER}")" >> "${GITHUB_PATH}"
+          set +o pipefail
           yes | "${SDKMANAGER}" --licenses
+          set -o pipefail
           "${SDKMANAGER}" --install \
             "platform-tools" \
             "platforms;android-34" \
