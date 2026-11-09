@@ -1,11 +1,15 @@
 package ir.dastyar.bridge
 
 import android.app.*
+import android.media.AudioFormat
+import android.media.AudioRecord
+import android.media.MediaRecorder
 import android.content.Intent
 import android.os.*
 import android.speech.tts.*
 import androidx.core.app.NotificationCompat
 import org.json.*
+import com.k2fsa.sherpa.onnx.OfflineRecognizer
 import org.vosk.Model
 import org.vosk.Recognizer
 import org.vosk.android.RecognitionListener
@@ -32,28 +36,34 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     private var tts: TextToSpeech? = null
     private var ttsReady = false
     private var pendingSpeech: String? = null
-    private var busy = false
+    @Volatile private var busy = false
     private var activeUntil = 0L
     private var conversationId: String? = null
+    private var offlineRecognizer: OfflineRecognizer? = null
+    @Volatile private var sherpaRunning = false
+    @Volatile private var sherpaProcessing = false
+    private var audioRecord: AudioRecord? = null
+    private var sherpaThread: Thread? = null
     @Volatile private var destroyed = false
 
     private val voskListener = object : RecognitionListener {
         override fun onPartialResult(hypothesis: String?) {}
         override fun onResult(hypothesis: String?) {
             val text = try { JSONObject(hypothesis ?: "{}").optString("text") } catch (_: Exception) { "" }
-            handleRecognized(text)
+            handler.post { handleRecognized(text) }
         }
         override fun onFinalResult(hypothesis: String?) {}
         override fun onError(exception: Exception?) {
-            handler.post { if (!destroyed) updateNotification("خطای میکروفون: " + (exception?.message ?: "نامشخص")) }
+            handler.post { if (!destroyed) { updateNotification("خطای تشخیص صدا؛ تلاش مجدد..."); handler.postDelayed({ restartVoskListening() }, 1200) } }
         }
-        override fun onTimeout() {}
+        override fun onTimeout() { handler.post { restartVoskListening() } }
     }
 
     override fun onCreate() {
         super.onCreate()
         foreground()
         tts = TextToSpeech(this, this)
+        conversationId = RayaMemoryStore(this).getProfile("voice_conversation_id").takeIf { it.isNotBlank() }
         loadModelAsync()
     }
 
@@ -63,7 +73,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             stopSelf()
             return START_NOT_STICKY
         }
-        if (speechService == null && modelLoader == null && !destroyed) loadModelAsync()
+        if (speechService == null && offlineRecognizer == null && modelLoader == null && !destroyed) loadModelAsync()
         return START_STICKY
     }
 
@@ -90,70 +100,172 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun loadModelAsync() {
-        if (modelLoader != null || speechService != null || destroyed) return
-        updateNotification("آماده‌سازی تشخیص گفتار فارسی…")
+        if (modelLoader != null || speechService != null || offlineRecognizer != null || destroyed) return
+        val selected = VoiceModel.fromId(Prefs.voiceModel(this))
+        updateNotification("در حال آماده‌سازی مدل ${selected.title}")
         modelLoader = Thread {
             var loadedModel: Model? = null
             var loadedRecognizer: Recognizer? = null
             var loadedSpeech: SpeechService? = null
+            var loadedOffline: OfflineRecognizer? = null
             try {
-                val dir = VoskModelInstaller.ensureModel(this,
-                    { percent -> handler.post { if (!destroyed) updateNotification("دریافت مدل فارسی: $percent٪") } },
-                    { destroyed || Thread.currentThread().isInterrupted })
-                if (destroyed) return@Thread
-                handler.post { updateNotification("بارگذاری مدل فارسی…") }
-                val createdModel = Model(dir.absolutePath)
-                loadedModel = createdModel
-                val createdRecognizer = Recognizer(createdModel, 16_000.0f)
-                loadedRecognizer = createdRecognizer
-                val createdSpeech = SpeechService(createdRecognizer, 16_000.0f)
-                loadedSpeech = createdSpeech
+                if (selected == VoiceModel.VOSK) {
+                    val dir = VoskModelInstaller.ensureModel(this,
+                        { percent -> handler.post { if (!destroyed) updateNotification("دریافت مدل فارسی: $percent٪") } },
+                        { destroyed || Thread.currentThread().isInterrupted })
+                    if (destroyed) return@Thread
+                    loadedModel = Model(dir.absolutePath)
+                    loadedRecognizer = Recognizer(loadedModel, 16_000.0f)
+                    loadedSpeech = SpeechService(loadedRecognizer, 16_000.0f)
+                } else {
+                    loadedOffline = VoiceModelInstaller.createSherpaRecognizer(this, selected, { status ->
+                        handler.post { if (!destroyed) updateNotification(status) }
+                    }, { destroyed || Thread.currentThread().isInterrupted })
+                }
                 handler.post {
                     if (destroyed) {
-                        try { loadedSpeech?.stop(); loadedSpeech?.shutdown(); loadedRecognizer?.close(); loadedModel?.close() } catch (_: Exception) {}
+                        try { loadedSpeech?.stop(); loadedSpeech?.shutdown(); loadedRecognizer?.close(); loadedModel?.close(); loadedOffline?.release() } catch (_: Exception) {}
                         return@post
                     }
                     model = loadedModel
                     recognizer = loadedRecognizer
                     speechService = loadedSpeech
+                    offlineRecognizer = loadedOffline
                     modelLoader = null
-                    speechService?.startListening(voskListener)
-                    updateNotification("رایا آماده شنیدن است؛ بگو «رایا»")
+                    if (selected == VoiceModel.VOSK) {
+                        speechService?.startListening(voskListener)
+                    } else {
+                        startSherpaAudio()
+                    }
+                    updateNotification("مدل ${selected.title} آماده است؛ بیدارباش رایا فعال است")
                 }
             } catch (e: Exception) {
-                try { loadedSpeech?.stop(); loadedSpeech?.shutdown(); loadedRecognizer?.close(); loadedModel?.close() } catch (_: Exception) {}
+                try { loadedSpeech?.stop(); loadedSpeech?.shutdown(); loadedRecognizer?.close(); loadedModel?.close(); loadedOffline?.release() } catch (_: Exception) {}
                 handler.post {
                     modelLoader = null
-                    if (!destroyed) updateNotification("آماده‌سازی مدل فارسی ناموفق بود؛ برنامه را دوباره باز کن. " + (e.message ?: ""))
+                    if (!destroyed) updateNotification("آماده‌سازی مدل ناموفق بود: ${e.message ?: "خطای ناشناخته"}")
                 }
             }
-        }.apply { name = "raya-vosk-model-loader"; start() }
+        }.apply { name = "raya-${selected.id}-model-loader"; start() }
     }
 
-    private fun normalize(s: String) = s.replace('ي', 'ی').replace('ك', 'ک').replace("ـ", "")
-        .replace(Regex("[\\u064B-\\u065F]"), "").replace(Regex("[،؛.!؟?]"), " ")
-        .replace(Regex("\\s+"), " ").trim()
+    private fun restartVoskListening() {
+        if (destroyed || busy || VoiceModel.fromId(Prefs.voiceModel(this)) != VoiceModel.VOSK) return
+        try { speechService?.startListening(voskListener) } catch (_: Exception) {
+            handler.postDelayed({ if (!destroyed && !busy) restartVoskListening() }, 1800)
+        }
+    }
+
+    private fun startSherpaAudio() {
+        if (destroyed || busy || sherpaRunning || offlineRecognizer == null) return
+        val minBuffer = AudioRecord.getMinBufferSize(16_000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        if (minBuffer <= 0) { updateNotification("میکروفون این دستگاه در دسترس نیست"); return }
+        val recorder = try {
+            AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, 16_000, AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer * 2, 6_400))
+        } catch (e: Exception) { updateNotification("ساخت ضبط‌کننده صدا ناموفق بود: ${e.message}"); return }
+        if (recorder.state != AudioRecord.STATE_INITIALIZED) {
+            recorder.release(); updateNotification("میکروفون قابل راه‌اندازی نیست"); return
+        }
+        try { recorder.startRecording() } catch (e: Exception) {
+            recorder.release(); updateNotification("شروع ضبط صدا ناموفق بود: ${e.message}"); return
+        }
+        audioRecord = recorder
+        sherpaRunning = true
+        sherpaThread = Thread {
+            val buffer = ShortArray(640)
+            val utterance = ArrayList<Float>(16_000 * 6)
+            var speaking = false
+            var silenceSamples = 0
+            while (sherpaRunning && !destroyed) {
+                val count = try { recorder.read(buffer, 0, buffer.size) } catch (_: Exception) { -1 }
+                if (count <= 0) { if (sherpaRunning) Thread.sleep(80); continue }
+                if (busy || sherpaProcessing) { utterance.clear(); speaking = false; silenceSamples = 0; continue }
+                var energy = 0.0
+                for (i in 0 until count) energy += buffer[i].toDouble() * buffer[i].toDouble()
+                val rms = kotlin.math.sqrt(energy / count).toInt()
+                if (rms >= 360) {
+                    speaking = true
+                    silenceSamples = 0
+                    for (i in 0 until count) utterance.add(buffer[i] / 32768.0f)
+                } else if (speaking) {
+                    silenceSamples += count
+                    for (i in 0 until count) utterance.add(buffer[i] / 32768.0f)
+                }
+                if (speaking && (silenceSamples >= 12_800 || utterance.size >= 128_000)) {
+                    if (utterance.size >= 4_800 && !sherpaProcessing) {
+                        val audio = FloatArray(utterance.size) { utterance[it] }
+                        sherpaProcessing = true
+                        Thread { transcribeSherpa(audio) }.apply { name = "raya-sherpa-decode"; start() }
+                    }
+                    utterance.clear(); speaking = false; silenceSamples = 0
+                }
+            }
+            try { recorder.stop() } catch (_: Exception) {}
+            recorder.release()
+        }.apply { name = "raya-sherpa-microphone"; start() }
+        updateNotification("در حال شنیدن فارسی به‌صورت آفلاین")
+    }
+
+    private fun stopSherpaAudio() {
+        sherpaRunning = false
+        val recorder = audioRecord
+        audioRecord = null
+        try { recorder?.stop() } catch (_: Exception) {}
+        val thread = sherpaThread
+        if (thread != null && thread !== Thread.currentThread()) {
+            try { thread.join(700) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+        }
+        sherpaThread = null
+    }
+    private fun transcribeSherpa(samples: FloatArray) {
+        var recognized = ""
+        try {
+            val active = offlineRecognizer ?: throw IllegalStateException("موتور تشخیص صدا آماده نیست")
+            val stream = active.createStream()
+            try {
+                stream.acceptWaveform(samples, 16_000)
+                active.decode(stream)
+                recognized = active.getResult(stream).text
+            } finally { stream.release() }
+        } catch (e: Exception) {
+            handler.post { if (!destroyed) updateNotification("خطای پردازش گفتار: ${e.message ?: "نامشخص"}") }
+        }
+        handler.post {
+            sherpaProcessing = false
+            if (!destroyed && !busy && recognized.isNotBlank()) handleRecognized(recognized)
+        }
+    }
+    private fun normalize(s: String): String = s
+        .replace('\u064A', '\u06CC')
+        .replace('\u0643', '\u06A9')
+        .replace('\u200C', ' ')
+        .replace(Regex("[\\u064B-\\u065F\\u0670]"), "")
+        .replace(Regex("[\\u060C\\u061B\\u061F,.!?;:]+"), " ")
+        .replace(Regex("\\s+"), " ")
+        .trim()
 
     private fun handleRecognized(raw: String) {
         if (destroyed || busy) return
         val text = normalize(raw)
         if (text.isBlank()) return
-        val wake = text.indexOf("رایا")
+        val wakeWord = "\u0631\u0627\u06CC\u0627"
+        val wake = text.indexOf(wakeWord)
         if (wake >= 0) {
             activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
-            val command = text.substring(wake + 4).trim().trimStart('،', ',', ' ')
-            if (command.isBlank()) speak("جانم، گوش می‌دهم.") else sendToChat(command)
+            val command = text.substring(wake + wakeWord.length).trim()
+            if (command.isBlank()) speak("بله؟ بگو چه کاری انجام بدهم.") else sendToChat(command)
         } else if (SystemClock.elapsedRealtime() < activeUntil) {
             activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
             sendToChat(text)
         }
     }
-
     private fun speak(text: String) {
-        if (!ttsReady) { pendingSpeech = text; updateNotification("پاسخ آماده است؛ صدای فارسی در حال آماده‌سازی"); return }
+        if (!ttsReady) { pendingSpeech = text; updateNotification("صدای فارسی در موتور گفتار گوشی در دسترس نیست"); return }
         if (text.isBlank()) { resumeListening(); return }
         busy = true
         speechService?.setPause(true)
+        if (offlineRecognizer != null) stopSherpaAudio()
         updateNotification("رایا در حال پاسخ‌گویی است")
         val clean = text.replace(Regex("https?://\\S+"), " ").replace(Regex("[#*_>|]"), " ")
             .replace(Regex("\\s+"), " ").trim().take(3500)
@@ -165,40 +277,53 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         if (busy) return
         busy = true
         speechService?.setPause(true)
-        updateNotification("در حال دریافت پاسخ از رایا…")
+        if (offlineRecognizer != null) stopSherpaAudio()
+        updateNotification("در حال ارسال درخواست به رایا")
         Thread {
             var answer = ""
             var failure: String? = null
+            val memory = RayaMemoryStore(this)
             try {
+                memory.addTurn(conversationId, "user", message)
+                val previousTurns = if (conversationId == null) memory.recentTurns(7).dropLast(1).joinToString(" | ") { "${it.role}: ${it.content.take(500)}" } else ""
+                val context = memory.personaContext() + if (previousTurns.isBlank()) "" else " Previous voice turns: $previousTurns"
+                val contextualMessage = context + " Current user message: " + message
                 val body = JSONObject().put("conversationId", conversationId ?: JSONObject.NULL)
-                    .put("message", message).put("attachmentIds", JSONArray())
+                    .put("message", contextualMessage).put("attachmentIds", JSONArray())
                 val conn = (URL(Prefs.serverUrl(this) + "/api/chat").openConnection() as HttpURLConnection).apply {
                     requestMethod = "POST"; connectTimeout = 20_000; readTimeout = 120_000; doOutput = true
                     setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                    setRequestProperty("Accept", "application/json")
+                    setRequestProperty("Accept", "text/event-stream, application/json")
                 }
                 conn.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
-                if (conn.responseCode !in 200..299) throw Exception("خطای سرور " + conn.responseCode)
+                if (conn.responseCode !in 200..299) throw Exception("خطای سرور ${conn.responseCode}")
                 conn.inputStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
                     lines.forEach { line ->
-                        val ev = try { if (line.isBlank()) null else JSONObject(line) } catch (_: Exception) { null }
+                        val payload = line.trim().removePrefix("data:").trim()
+                        if (payload.isBlank() || payload == "[DONE]") return@forEach
+                        val ev = try { JSONObject(payload) } catch (_: Exception) { null }
                         if (ev != null) when (ev.optString("type")) {
-                            "status" -> ev.optString("conversationId").takeIf { it.isNotBlank() }?.let { conversationId = it }
+                            "status" -> ev.optString("conversationId").takeIf { it.isNotBlank() }?.let {
+                                conversationId = it; memory.setProfile("voice_conversation_id", it)
+                            }
                             "delta" -> answer += ev.optString("text")
                             "done" -> {
-                                ev.optString("conversationId").takeIf { it.isNotBlank() }?.let { conversationId = it }
+                                ev.optString("conversationId").takeIf { it.isNotBlank() }?.let {
+                                    conversationId = it; memory.setProfile("voice_conversation_id", it)
+                                }
                                 ev.optJSONObject("assistantMessage")?.optString("content")?.takeIf { it.isNotBlank() }?.let { answer = it }
                             }
-                            "error" -> throw Exception(ev.optString("message", "خطا در پاسخ رایا"))
+                            "error" -> throw Exception(ev.optString("message", "پاسخی دریافت نشد"))
                         }
                     }
                 }
-                if (answer.isBlank()) throw Exception("پاسخی از سرور دریافت نشد")
-            } catch (e: Exception) { failure = e.message ?: "ارتباط برقرار نشد" }
+                if (answer.isBlank()) throw Exception("پاسخ متنی از سرور دریافت نشد")
+                memory.addTurn(conversationId, "assistant", answer)
+            } catch (e: Exception) { failure = e.message ?: "ارتباط با رایا ناموفق بود" }
             handler.post {
                 busy = false
                 if (destroyed) return@post
-                if (failure != null) { activeUntil = 0L; speak("متأسفم. " + failure) }
+                if (failure != null) { activeUntil = 0L; speak("متأسفم. $failure") }
                 else { activeUntil = SystemClock.elapsedRealtime() + SESSION_MS; speak(answer) }
             }
         }.apply { name = "raya-chat-request"; start() }
@@ -207,9 +332,9 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     private fun resumeListening() {
         busy = false
         speechService?.setPause(false)
-        if (!destroyed) updateNotification("رایا آماده شنیدن است؛ بگو «رایا»")
+        if (!destroyed && offlineRecognizer != null) startSherpaAudio()
+        if (!destroyed) updateNotification("در حال شنیدن؛ برای شروع بگو رایا")
     }
-
     private fun foreground() {
         val nm = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(
@@ -237,9 +362,12 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         destroyed = true
+        stopSherpaAudio()
         try { modelLoader?.interrupt() } catch (_: Exception) {}
         try { speechService?.stop(); speechService?.shutdown(); recognizer?.close(); model?.close() } catch (_: Exception) {}
         speechService = null; recognizer = null; model = null
+        try { offlineRecognizer?.release() } catch (_: Exception) {}
+        offlineRecognizer = null
         try { tts?.stop(); tts?.shutdown() } catch (_: Exception) {}
         tts = null
         super.onDestroy()
