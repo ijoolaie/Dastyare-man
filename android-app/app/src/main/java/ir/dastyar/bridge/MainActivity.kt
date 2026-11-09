@@ -315,27 +315,24 @@ class MainActivity : AppCompatActivity() {
         val content = if (turns.isEmpty()) "هنوز مکالمه صوتی‌ای ثبت نشده است." else turns.joinToString("\n\n") { turn ->
             val role = if (turn.role == "user") "شما" else "رایا"
             val time = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(turn.createdAt))
-            "$role  •  $time\n${turn.content}"
+            "$role | $time\n${turn.content}"
         }
         val text = TextView(this).apply { setPadding(32, 24, 32, 24); textSize = 14f; this.text = content }
         val scroll = ScrollView(this).apply { addView(text) }
-        AlertDialog.Builder(this)
+        val historyDialog = AlertDialog.Builder(this)
             .setTitle("تاریخچه مکالمات صوتی")
             .setView(scroll)
             .setPositiveButton("بستن", null)
             .setNeutralButton("پاک کردن تاریخچه", null)
             .show()
-            .apply {
-                getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                    AlertDialog.Builder(this@MainActivity)
-                        .setMessage("تمام تاریخچه مکالمات صوتی از حافظه محلی پاک شود؟")
-                        .setNegativeButton("خیر", null)
-                        .setPositiveButton("پاک شود") { _, _ -> store.clearHistory(); dismiss(); toast("تاریخچه پاک شد") }
-                        .show()
-                }
-            }
+        historyDialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+            AlertDialog.Builder(this@MainActivity)
+                .setMessage("تاریخچه محلی پاک شود؟ سوابق ذخیره‌شده روی سرور از اینجا حذف نمی‌شوند.")
+                .setNegativeButton("خیر", null)
+                .setPositiveButton("پاک شود") { _, _ -> store.clearHistory(); historyDialog.dismiss(); toast("تاریخچه محلی پاک شد") }
+                .show()
+        }
     }
-
     private fun openBatterySettings() {
         try {
             startActivity(Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName")))
