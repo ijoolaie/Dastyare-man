@@ -3,7 +3,10 @@ package ir.dastyar.bridge
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.AlertDialog
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
@@ -46,6 +49,20 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnConnect: Button
     private lateinit var btnSettings: ImageButton
 
+    private val permissionReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val permission = intent?.getStringExtra(EXTRA_PERMISSION) ?: return
+            requestPermissionIfNeeded(permission)
+        }
+    }
+
+    companion object {
+        const val ACTION_REQUEST_PERMISSION = "ir.dastyar.bridge.REQUEST_PERMISSION"
+        const val EXTRA_PERMISSION = "permission"
+        private const val PERMISSION_PREFS = "permission_prompts"
+        private const val PENDING_PERMISSION = "pending_permission"
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -67,7 +84,46 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = WebViewClient()
 
         if (Prefs.isPaired(this)) showApp() else showPairing()
-        requestRuntimePermissions()
+    }
+
+    override fun onStart() {
+        super.onStart()
+        val filter = IntentFilter(ACTION_REQUEST_PERMISSION)
+        if (Build.VERSION.SDK_INT >= 33) {
+            registerReceiver(permissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(permissionReceiver, filter)
+        }
+    }
+
+    override fun onStop() {
+        try { unregisterReceiver(permissionReceiver) } catch (_: Exception) { }
+        super.onStop()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        val prefs = getSharedPreferences(PERMISSION_PREFS, MODE_PRIVATE)
+        val pending = prefs.getString(PENDING_PERMISSION, null) ?: return
+        prefs.edit().remove(PENDING_PERMISSION).apply()
+        requestPermissionIfNeeded(pending)
+    }
+
+    private fun requestPermissionIfNeeded(permission: String) {
+        if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) {
+            toast("این مجوز از قبل فعال است")
+            return
+        }
+        ActivityCompat.requestPermissions(this, arrayOf(permission), 1002)
+    }
+
+    @Deprecated("Deprecated in Java")
+    override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == 1002) {
+            toast(if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) "مجوز فعال شد؛ عملیات را دوباره اجرا کن" else "مجوز داده نشد؛ این قابلیت در دسترس نیست")
+        }
     }
 
     private fun showPairing() {
@@ -181,7 +237,7 @@ class MainActivity : AppCompatActivity() {
             "تغییر اتصال (سرور یا توکن دیگر)",
             "دسترسی نوتیفیکیشن‌ها",
             "غیرفعال‌کردن بهینه‌سازی باتری",
-            "درخواست دوباره مجوزها",
+            "بررسی مجوز درخواستی",
         )
         AlertDialog.Builder(this)
             .setTitle("تنظیمات پل")
@@ -207,7 +263,7 @@ class MainActivity : AppCompatActivity() {
                     } catch (e: Exception) {
                         toast("این گزینه در این دستگاه موجود نیست")
                     }
-                    3 -> requestRuntimePermissions()
+                    3 -> onResume()
                 }
             }
             .show()
