@@ -109,6 +109,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestPermissionIfNeeded(permission: String) {
+        getSharedPreferences(PERMISSION_PREFS, MODE_PRIVATE).edit().remove(PENDING_PERMISSION).apply()
         if (ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED) {
             toast("این مجوز از قبل فعال است")
             return
