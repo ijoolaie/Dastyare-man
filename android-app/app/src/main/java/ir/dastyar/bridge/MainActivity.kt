@@ -188,7 +188,6 @@ class MainActivity : AppCompatActivity() {
                     Prefs.save(this, server, token)
                     toast("متصل شد ✅")
                     showApp()
-                    askNotificationAccess()
                 } else {
                     toast("اتصال ناموفق: $err")
                 }
@@ -196,29 +195,13 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    // ── مجوزها ───────────────────────────────────────────────────
-
-    private fun askNotificationAccess() {
-        AlertDialog.Builder(this)
-            .setTitle("دسترسی نوتیفیکیشن")
-            .setMessage("برای اینکه دستیار نوتیفیکیشن‌های گوشی را بخواند، در صفحه بعدی به «دستیار من» اجازه بده. (اختیاری اما توصیه‌شده)")
-            .setPositiveButton("باز کردن تنظیمات") { _, _ ->
-                try {
-                    startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                } catch (e: Exception) {
-                    // منو در این دستگاه موجود نیست
-                }
-            }
-            .setNegativeButton("بعداً", null)
-            .show()
-    }
+    // Notification-listener access is intentionally omitted in the temporary sideload build.
 
     // ── منوی تنظیمات ─────────────────────────────────────────────
 
     private fun openSettings() {
         val options = arrayOf(
             "تغییر اتصال (سرور یا توکن دیگر)",
-            "دسترسی نوتیفیکیشن‌ها",
             "غیرفعال‌کردن بهینه‌سازی باتری",
         )
         AlertDialog.Builder(this)
@@ -231,11 +214,6 @@ class MainActivity : AppCompatActivity() {
                         recreate()
                     }
                     1 -> try {
-                        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
-                    } catch (e: Exception) {
-                        // منو در این دستگاه موجود نیست
-                    }
-                    2 -> try {
                         startActivity(
                             Intent(
                                 Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
