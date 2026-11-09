@@ -30,8 +30,8 @@ class BridgeService : Service() {
         /** توانایی‌هایی که اپ به سرور معرفی می‌کند — با ANDROID_CAPS سمت سرور هماهنگ است */
         val CAPS = listOf(
             "sysinfo", "battery", "vibrate", "notify", "clipboard_write", "clipboard_read",
-            "open_url", "open_app", "apps", "notifications", "media", "volume", "flashlight",
-            "geolocation", "sms_send", "sms_read", "contacts", "call",
+            "open_url", "open_app", "apps", "media", "volume", "flashlight",
+            "geolocation", "sms_send", "contacts", "call",
         )
     }
 
