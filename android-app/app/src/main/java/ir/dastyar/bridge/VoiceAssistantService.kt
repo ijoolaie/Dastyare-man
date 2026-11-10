@@ -326,7 +326,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         Thread {
             try {
                 val dir = PersianTtsModel.ensureInstalled(this,
-                    { percent -> handler.post { if (!destroyed) updateNotification("Downloading Persian voice model: $percent%") } },
+                    { percent -> handler.post { if (!destroyed) updateNotification("در حال دریافت مدل صدای فارسی: $percent٪") } },
                     { destroyed || Thread.currentThread().isInterrupted })
                 val config = OfflineTtsConfig(
                     model = OfflineTtsModelConfig(
@@ -347,14 +347,14 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     offlineTts = engine
                     Log.i(TAG, "Offline Persian TTS ready")
                     pendingSpeech?.let { pendingSpeech = null; speak(it) }
-                    updateNotification("Offline Persian voice is ready")
+                    updateNotification("صدای فارسی آفلاین آماده است")
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Offline Persian TTS initialization failed: ${e.javaClass.simpleName}")
                 handler.post {
                     offlineTtsLoading = false
                     if (!destroyed) {
-                        updateNotification("Persian voice unavailable; check internet and storage")
+                        updateNotification("مدل صدای فارسی در دسترس نیست؛ اینترنت و فضای خالی را بررسی کنید")
                         pendingSpeech = null
                         resumeListening()
                     }
@@ -370,7 +370,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         busy = true
         speechService?.setPause(true)
         if (offlineRecognizer != null) stopSherpaAudio()
-        updateNotification("Raya is speaking Persian")
+        updateNotification("رایا در حال پاسخ‌گویی صوتی است")
         Thread {
             var track: AudioTrack? = null
             try {
@@ -417,7 +417,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             busy = true
             speechService?.setPause(true)
             if (offlineRecognizer != null) stopSherpaAudio()
-            updateNotification("Raya is speaking")
+            updateNotification("رایا در حال پاسخ‌گویی است")
             val clean = text.replace(Regex("https?://\\S+"), " ").replace(Regex("[#*_>|]"), " ")
                 .replace(Regex("\\s+"), " ").trim().take(3500)
             if (tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString()) == TextToSpeech.ERROR)
@@ -428,7 +428,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         pendingSpeech = text
         loadOfflineTtsAsync()
         resumeListening()
-        updateNotification("Preparing offline Persian voice")
+        updateNotification("آماده‌سازی صدای فارسی آفلاین")
     }
     private fun sendToChat(message: String) {
         if (busy) return
