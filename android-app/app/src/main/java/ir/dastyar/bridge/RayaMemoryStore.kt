@@ -38,12 +38,23 @@ class RayaMemoryStore(context: Context) : SQLiteOpenHelper(context, "raya_memory
         }, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
-    fun personaContext(): String = buildString {
-        append("اطلاعات هویتی و حافظه پایدار دستیار را رعایت کن. ")
-        append("نام تو: ").append(getProfile("assistant_name", "رایا")).append(". ")
-        append("نام برنامه: ").append(getProfile("app_name", "دستیار من")).append(". ")
-        append("سازنده برنامه: ").append(getProfile("creator", "نامشخص")).append(". ")
-        append("هدف برنامه: ").append(getProfile("purpose", "دستیار شخصی")).append(". ")
+    fun personaContext(userMessage: String): String = buildString {
+        append("در مکالمه عادی هرگز خودت را معرفی نکن، نام یا سازنده یا هدف برنامه را داوطلبانه تکرار نکن و مستقیم به درخواست کاربر پاسخ بده. ")
+        append("فقط اگر کاربر صریحاً درباره هویت، نام، سازنده یا خود برنامه پرسید، اطلاعات هویتی را بیان کن. ")
+        append("اگر کاربر فقط کلمه بیدارباش را گفت، پاسخ دقیق تو باید این باشد: «بله، چه کاری می‌توانم انجام دهم؟» ")
+        append("دستگاه Android متصل از این فرمان‌ها پشتیبانی می‌کند: ").append(BridgeService.CAPS.joinToString(", ")).append(". ")
+        append("اگر درخواست کاربر در این فهرست است، از مسیر اجرای فرمان دستگاه متصل استفاده کن؛ صرفاً به‌دلیل اجرا در WebView یا Chrome نگو نمی‌توانم. فقط نتیجه واقعی ابزار را گزارش کن. ")
+        append("خواندن SMS و اعلان‌های سایر برنامه‌ها فعلاً غیرفعال است؛ ارسال SMS صفحه پیامک را برای تأیید نهایی کاربر باز می‌کند. ")
+        val asksIdentity = Regex(
+            "(اسم تو|نام تو|تو کی هستی|خودت رو معرفی|خودت را معرفی|سازنده|خالق|چه کسی ساخت|اسم برنامه|نام برنامه|درباره خودت|who are you|your name|who made you|creator)",
+            RegexOption.IGNORE_CASE
+        ).containsMatchIn(userMessage)
+        if (asksIdentity) {
+            append("اطلاعات هویتی در صورت درخواست صریح: نام دستیار: ").append(getProfile("assistant_name", "رایا")).append(". ")
+            append("نام برنامه: ").append(getProfile("app_name", "دستیار من")).append(". ")
+            append("سازنده برنامه: ").append(getProfile("creator", "نامشخص")).append(". ")
+            append("هدف برنامه: ").append(getProfile("purpose", "دستیار شخصی")).append(". ")
+        }
         append("اصول رفتاری: ").append(getProfile("principles", "صداقت و حفظ حریم خصوصی")).append(". ")
         val notes = getProfile("memory_notes")
         if (notes.isNotBlank()) append("حافظه تکمیلی: ").append(notes).append(".")

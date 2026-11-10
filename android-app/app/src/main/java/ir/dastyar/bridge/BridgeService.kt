@@ -9,6 +9,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.IBinder
 import android.os.SystemClock
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
@@ -26,6 +27,7 @@ class BridgeService : Service() {
         const val CHANNEL_ID = "bridge_foreground"
         const val NOTIF_ID = 42
         private const val POLL_WAIT_S = 25
+        private const val TAG = "RayaBridge"
 
         /** توانایی‌هایی که اپ به سرور معرفی می‌کند — با ANDROID_CAPS سمت سرور هماهنگ است */
         val CAPS = listOf(
@@ -42,6 +44,7 @@ class BridgeService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        Log.i(TAG, "Bridge service created; paired=${Prefs.isPaired(this)}")
         startForegroundCompat()
     }
 
@@ -52,12 +55,14 @@ class BridgeService : Service() {
                 name = "bridge-loop"
                 start()
             }
+            Log.i(TAG, "Bridge polling worker started")
         }
         return START_STICKY
     }
 
     override fun onDestroy() {
         running = false
+        Log.i(TAG, "Bridge service destroyed")
         super.onDestroy()
     }
 
@@ -96,8 +101,11 @@ class BridgeService : Service() {
             conn.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
             val stream = if (conn.responseCode in 200..299) conn.inputStream else conn.errorStream
             val text = stream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() } ?: ""
-            HttpResult(conn.responseCode, text)
+            val result = HttpResult(conn.responseCode, text)
+            Log.d(TAG, "POST $path HTTP ${result.code}")
+            result
         } catch (e: Exception) {
+            Log.e(TAG, "POST $path failed: ${e.javaClass.simpleName}: ${e.message}")
             null
         }
     }
@@ -116,7 +124,9 @@ class BridgeService : Service() {
             throw Exception("poll HTTP ${conn.responseCode}: ${err?.take(200) ?: ""}")
         }
         val data = JSONObject(conn.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() })
-        return data.optJSONObject("command")
+        val command = data.optJSONObject("command")
+        if (command != null) Log.i(TAG, "Command received id=${command.optString("id")} action=${command.optString("action")}")
+        return command
     }
 
     // ── حلقه اصلی ────────────────────────────────────────────────
@@ -143,6 +153,7 @@ class BridgeService : Service() {
                 if (reg.code != 200 || !regJson.optBoolean("ok", false)) {
                     throw Exception("ثبت‌نام رد شد: ${regJson.optString("error", "HTTP ${reg.code}")}")
                 }
+                Log.i(TAG, "Device registered; capabilities=${CAPS.joinToString(",")}")
                 backoff = 2_000L
 
                 // حلقه دریافت دستورها
@@ -152,15 +163,20 @@ class BridgeService : Service() {
                     val action = cmd.optString("action")
                     val args = cmd.optJSONObject("args") ?: JSONObject()
                     val (ok, result) = Commands.execute(this, action, args)
+                    Log.i(TAG, "Command completed id=$id action=$action ok=$ok resultChars=${result.length}")
                     val resBody = JSONObject()
                         .put("token", token)
                         .put("id", id)
                         .put("ok", ok)
                         .put("result", result)
-                    httpPost(server, "/api/devices/result", resBody)
+                    val posted = httpPost(server, "/api/devices/result", resBody)
+                    if (posted == null || posted.code !in 200..299) {
+                        Log.e(TAG, "Command result delivery failed id=$id http=${posted?.code ?: "network"}")
+                    }
                 }
             } catch (e: Exception) {
                 if (!running) return
+                Log.e(TAG, "Bridge loop error: ${e.javaClass.simpleName}: ${e.message}")
                 SystemClock.sleep(backoff)
                 backoff = (backoff * 2).coerceAtMost(30_000L)
             }

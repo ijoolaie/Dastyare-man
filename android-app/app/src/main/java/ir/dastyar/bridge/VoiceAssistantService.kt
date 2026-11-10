@@ -330,12 +330,14 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         val wake = wakeWordMatch(text)
         Log.d(TAG, "Speech segment chars=${text.length}; wakeDetected=${wake != null}; activeSession=${SystemClock.elapsedRealtime() < activeUntil}")
         if (wake != null) {
-            // Each explicit wake starts a distinct local history conversation.
+            // A new wake word starts a fresh local and server-side voice conversation.
             voiceHistoryId = UUID.randomUUID().toString()
             RayaMemoryStore(this).setProfile("voice_local_history_id", voiceHistoryId)
+            conversationId = null
+            RayaMemoryStore(this).setProfile("voice_server_conversation_id", "")
             activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
             val command = text.substring(wake.last + 1).trim()
-            if (command.isBlank()) speak("بله؟ بگو چه کاری انجام بدهم.") else sendToChat(command)
+            if (command.isBlank()) speak("بله، چه کاری می‌توانم انجام دهم؟") else sendToChat(command)
         } else if (SystemClock.elapsedRealtime() < activeUntil) {
             activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
             sendToChat(text)
@@ -575,7 +577,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             try {
                 memory.addTurn(voiceHistoryId, "user", message)
                 val previousTurns = if (conversationId == null) memory.recentTurns(7).dropLast(1).joinToString(" | ") { "${it.role}: ${it.content.take(500)}" } else ""
-                val context = memory.personaContext() + if (previousTurns.isBlank()) "" else " Previous voice turns: $previousTurns"
+                val context = memory.personaContext(message) + if (previousTurns.isBlank()) "" else " Previous voice turns: $previousTurns"
                 val contextualMessage = context + " Current user message: " + message
                 val body = JSONObject().put("conversationId", conversationId ?: JSONObject.NULL)
                     .put("message", contextualMessage).put("attachmentIds", JSONArray())

@@ -22,6 +22,7 @@ import android.os.Build
 import android.os.Environment
 import android.os.StatFs
 import android.os.SystemClock
+import android.util.Log
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.ContactsContract
@@ -39,6 +40,7 @@ import java.util.Locale
  * همه عملیات‌ها بدون root و فقط با مجوزهای استاندارد اندروید.
  */
 object Commands {
+    private const val TAG = "RayaCommands"
 
     fun has(ctx: Context, perm: String): Boolean =
         ContextCompat.checkSelfPermission(ctx, perm) == PackageManager.PERMISSION_GRANTED
@@ -54,8 +56,9 @@ object Commands {
     }
 
     fun execute(ctx: Context, action: String, args: JSONObject): Pair<Boolean, String> {
+        Log.i(TAG, "Executing action=$action")
         return try {
-            when (action) {
+            val result = when (action) {
                 "sysinfo" -> sysinfo(ctx)
                 "battery" -> battery(ctx)
                 "vibrate" -> vibrate(ctx, args)
@@ -76,11 +79,13 @@ object Commands {
                 "call" -> call(ctx, args)
                 else -> Pair(false, "عملیات ناشناخته: $action")
             }
+            Log.i(TAG, "Action=$action ok=${result.first} resultChars=${result.second.length}")
+            result
         } catch (e: Exception) {
+            Log.e(TAG, "Action=$action failed: ${e.javaClass.simpleName}: ${e.message}")
             Pair(false, "خطا: ${e.message ?: e.javaClass.simpleName}")
         }
     }
-
     // ── باتری ────────────────────────────────────────────────────
 
     private fun batteryInfo(ctx: Context): Pair<Int, Boolean> {
