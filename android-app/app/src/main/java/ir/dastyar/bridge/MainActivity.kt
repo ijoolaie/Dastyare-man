@@ -238,7 +238,8 @@ class MainActivity : AppCompatActivity() {
             "هویت و حافظه رایا",
             "تاریخچه مکالمات صوتی",
             "بهینه‌سازی باتری",
-            "تغییر اتصال یا قطع اتصال"
+            "تغییر اتصال یا قطع اتصال",
+            "Notification access"
         )
         AlertDialog.Builder(this)
             .setTitle("تنظیمات دستیار من")
@@ -249,7 +250,8 @@ class MainActivity : AppCompatActivity() {
                     2 -> openMemorySettings()
                     3 -> openVoiceHistory()
                     4 -> openBatterySettings()
-                    5 -> {
+                    5 -> openNotificationAccessSettings()
+                    6 -> {
                         AlertDialog.Builder(this)
                             .setTitle("Disconnect this device?")
                             .setMessage("This will erase the saved server address and device token. You will need to pair the app again to reconnect.")
@@ -404,6 +406,13 @@ class MainActivity : AppCompatActivity() {
             }
             .setNegativeButton("Close", null)
             .show()
+    }
+    private fun openNotificationAccessSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+        } catch (_: Exception) {
+            toast("Unable to open notification access settings")
+        }
     }
     private fun openBatterySettings() {
         try {
