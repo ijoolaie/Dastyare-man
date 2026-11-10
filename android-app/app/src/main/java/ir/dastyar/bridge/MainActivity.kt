@@ -227,7 +227,7 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
-    // Notification-listener access is intentionally omitted in the temporary sideload build.
+    // Notification-listener access is user-enabled from the app settings menu.
 
     // ── منوی تنظیمات ─────────────────────────────────────────────
 
