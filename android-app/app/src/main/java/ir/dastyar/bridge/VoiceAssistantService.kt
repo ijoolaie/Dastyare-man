@@ -125,7 +125,10 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 override fun onDone(id: String?) { handler.post { resumeListening() } }
             })
             pendingSpeech?.let { pendingSpeech = null; speak(it) }
-        } else updateNotification("صدای فارسی نصب نیست؛ زبان فارسی را در تنظیمات Text-to-Speech نصب کن")
+        } else {
+            updateNotification("آماده‌سازی صدای فارسی آفلاین")
+            loadOfflineTtsAsync()
+        }
     }
 
     private fun loadModelAsync() {
