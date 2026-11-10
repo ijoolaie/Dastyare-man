@@ -87,8 +87,9 @@ class MainActivity : AppCompatActivity() {
         // The rendering engine remains the device's Chromium-based Android WebView.
         val defaultUserAgent = WebSettings.getDefaultUserAgent(this)
         val chromeVersion = Regex("Chrome/([0-9.]+)").find(defaultUserAgent)?.groupValues?.get(1)
-        if (chromeVersion != null) {
-            webView.settings.userAgentString = defaultUserAgent.replace("Chrome/$chromeVersion", "EdgA/$chromeVersion")
+        if (chromeVersion != null && !defaultUserAgent.contains("EdgA/")) {
+            // Keep Chrome/ so Chromium feature detection remains truthful, while exposing Edge-for-Android identity.
+            webView.settings.userAgentString = "$defaultUserAgent EdgA/$chromeVersion"
         }
         webView.webViewClient = WebViewClient()
         webView.webChromeClient = WebChromeClient()

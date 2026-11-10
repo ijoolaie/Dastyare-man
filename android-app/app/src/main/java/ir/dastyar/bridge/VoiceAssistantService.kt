@@ -478,6 +478,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun playEdgeSpeech(text: String, voice: String) {
+        Log.i(TAG, "Edge TTS requested voice=$voice chars=${text.length}")
         busy = true
         speechService?.setPause(true)
         if (offlineRecognizer != null) stopSherpaAudio()
@@ -485,6 +486,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         Thread {
             try {
                 val audio = EdgeTtsClient.synthesize(text, voice)
+                Log.i(TAG, "Edge TTS synthesis succeeded voice=$voice bytes=${audio.size}")
                 val file = File(cacheDir, "raya-edge-${UUID.randomUUID()}.mp3")
                 file.writeBytes(audio)
                 handler.post {
