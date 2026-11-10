@@ -398,6 +398,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     if (written <= 0) throw IllegalStateException("AudioTrack write failed: $written")
                     offset += written
                 }
+                val playbackDeadline = SystemClock.elapsedRealtime() + (samples.size * 1000L / sampleRate) + 5000L
+                while (!destroyed && track.playbackHeadPosition.toLong() < samples.size && SystemClock.elapsedRealtime() < playbackDeadline) Thread.sleep(20)
                 if (!destroyed) track.stop()
                 Log.i(TAG, "Offline Persian TTS playback completed samples=${samples.size}")
             } catch (e: Exception) {
