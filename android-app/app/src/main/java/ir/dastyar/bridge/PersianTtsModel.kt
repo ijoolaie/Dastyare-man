@@ -107,6 +107,7 @@ internal object PersianTtsModel {
             if (!isInstalled(extractedModel)) error("Downloaded TTS model is incomplete")
             if (model.exists()) model.deleteRecursively()
             if (!extractedModel.renameTo(model)) extractedModel.copyRecursively(model, overwrite = true)
+            archive.delete()
             onProgress(100)
             return model
         } finally {
