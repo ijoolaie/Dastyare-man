@@ -206,6 +206,32 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }.apply { name = "raya-${selected.id}-model-loader"; start() }
     }
 
+    /** Tracks the lower energy envelope so steady music is treated as background, not speech. */
+    private class AdaptiveNoiseGate {
+        private val samples = IntArray(50) // about two seconds at 40 ms per frame
+        private var size = 0
+        private var cursor = 0
+        private var floor = 180.0
+        private var frames = 0
+
+        fun isSpeech(rms: Int): Boolean {
+            samples[cursor] = rms
+            cursor = (cursor + 1) % samples.size
+            if (size < samples.size) size++
+            frames++
+            if (size >= 10 && frames % 5 == 0) {
+                val sorted = samples.copyOf(size)
+                sorted.sort()
+                val ambient = sorted[((size - 1) * 15) / 100].toDouble()
+                floor = if (ambient > floor) floor * 0.88 + ambient * 0.12
+                        else floor * 0.94 + ambient * 0.06
+            }
+            val threshold = maxOf(420.0, floor * 1.45).coerceAtMost(7000.0)
+            if (frames % 50 == 0) Log.d(TAG, "Audio gate rms=$rms ambient=${floor.toInt()} threshold=${threshold.toInt()}")
+            return rms >= threshold
+        }
+    }
+
     private fun startVoskAudio() {
         if (destroyed || busy || voskAudioRunning || recognizer == null) return
         val minBuffer = AudioRecord.getMinBufferSize(16_000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
@@ -219,6 +245,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             if (AcousticEchoCanceler.isAvailable()) echoCanceler = AcousticEchoCanceler.create(recorder.audioSessionId)?.apply { enabled = true }
             if (NoiseSuppressor.isAvailable()) noiseSuppressor = NoiseSuppressor.create(recorder.audioSessionId)?.apply { enabled = true }
             if (AutomaticGainControl.isAvailable()) automaticGainControl = AutomaticGainControl.create(recorder.audioSessionId)?.apply { enabled = true }
+            Log.i(TAG, "Vosk audio effects: AEC=${echoCanceler?.enabled == true}, NS=${noiseSuppressor?.enabled == true}, AGC=${automaticGainControl?.enabled == true}")
         } catch (e: Exception) { Log.w(TAG, "Vosk audio preprocessing unavailable: ${e.javaClass.simpleName}") }
         try { recorder.startRecording() } catch (e: Exception) { recorder.release(); return }
         audioRecord = recorder
@@ -227,7 +254,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         voskAudioThread = Thread {
             val buffer = ShortArray(640)
             val silence = ShortArray(640)
-            var noiseFloorRms = 180.0
+            val noiseGate = AdaptiveNoiseGate()
             while (voskAudioRunning && !destroyed) {
                 val count = try { recorder.read(buffer, 0, buffer.size) } catch (_: Exception) { -1 }
                 if (count <= 0) { if (voskAudioRunning) Thread.sleep(50); continue }
@@ -235,13 +262,12 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 var energy = 0.0
                 for (i in 0 until count) energy += buffer[i].toDouble() * buffer[i].toDouble()
                 val rms = kotlin.math.sqrt(energy / count).toInt()
-                val threshold = maxOf(420.0, noiseFloorRms * 1.75).coerceAtMost(2200.0).toInt()
+                val speechFrame = noiseGate.isSpeech(rms)
                 try {
                     val active = recognizer ?: break
-                    val completed = if (rms >= threshold) {
+                    val completed = if (speechFrame) {
                         active.acceptWaveForm(buffer, count)
                     } else {
-                        noiseFloorRms = noiseFloorRms * 0.96 + rms * 0.04
                         active.acceptWaveForm(silence, count)
                     }
                     if (completed) {
@@ -279,6 +305,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             if (AcousticEchoCanceler.isAvailable()) echoCanceler = AcousticEchoCanceler.create(recorder.audioSessionId)?.apply { enabled = true }
             if (NoiseSuppressor.isAvailable()) noiseSuppressor = NoiseSuppressor.create(recorder.audioSessionId)?.apply { enabled = true }
             if (AutomaticGainControl.isAvailable()) automaticGainControl = AutomaticGainControl.create(recorder.audioSessionId)?.apply { enabled = true }
+            Log.i(TAG, "Sherpa audio effects: AEC=${echoCanceler?.enabled == true}, NS=${noiseSuppressor?.enabled == true}, AGC=${automaticGainControl?.enabled == true}")
         } catch (e: Exception) { Log.w(TAG, "Audio preprocessing unavailable: ${e.javaClass.simpleName}") }
         try { recorder.startRecording() } catch (e: Exception) {
             recorder.release(); updateNotification("شروع ضبط صدا ناموفق بود: ${e.message}"); return
@@ -291,7 +318,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             val utterance = ArrayList<Float>(16_000 * 6)
             var speaking = false
             var silenceSamples = 0
-            var noiseFloorRms = 180.0
+            val noiseGate = AdaptiveNoiseGate()
             while (sherpaRunning && !destroyed) {
                 val count = try { recorder.read(buffer, 0, buffer.size) } catch (_: Exception) { -1 }
                 if (count <= 0) { if (sherpaRunning) Thread.sleep(80); continue }
@@ -299,16 +326,13 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 var energy = 0.0
                 for (i in 0 until count) energy += buffer[i].toDouble() * buffer[i].toDouble()
                 val rms = kotlin.math.sqrt(energy / count).toInt()
-                val speechThreshold = maxOf(420.0, noiseFloorRms * 1.75).coerceAtMost(2200.0).toInt()
-                if (rms >= speechThreshold) {
+                if (noiseGate.isSpeech(rms)) {
                     speaking = true
                     silenceSamples = 0
                     for (i in 0 until count) utterance.add(buffer[i] / 32768.0f)
                 } else if (speaking) {
                     silenceSamples += count
                     for (i in 0 until count) utterance.add(buffer[i] / 32768.0f)
-                } else {
-                    noiseFloorRms = (noiseFloorRms * 0.96) + (rms * 0.04)
                 }
                 if (speaking && (silenceSamples >= 12_800 || utterance.size >= 128_000)) {
                     if (utterance.size >= 4_800 && !sherpaProcessing) {
