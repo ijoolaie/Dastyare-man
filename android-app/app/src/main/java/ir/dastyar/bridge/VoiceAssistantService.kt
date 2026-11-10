@@ -255,6 +255,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             val buffer = ShortArray(640)
             val silence = ShortArray(640)
             val noiseGate = AdaptiveNoiseGate()
+            var listeningDuckRequested = false
             while (voskAudioRunning && !destroyed) {
                 val count = try { recorder.read(buffer, 0, buffer.size) } catch (_: Exception) { -1 }
                 if (count <= 0) { if (voskAudioRunning) Thread.sleep(50); continue }
@@ -263,6 +264,10 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 for (i in 0 until count) energy += buffer[i].toDouble() * buffer[i].toDouble()
                 val rms = kotlin.math.sqrt(energy / count).toInt()
                 val speechFrame = noiseGate.isSpeech(rms)
+                if (speechFrame && !listeningDuckRequested) {
+                    listeningDuckRequested = true
+                    handler.post { if (!destroyed) requestSpeechAudioFocus() }
+                }
                 try {
                     val active = recognizer ?: break
                     val completed = if (speechFrame) {
@@ -272,7 +277,12 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     }
                     if (completed) {
                         val text = try { JSONObject(active.result).optString("text") } catch (_: Exception) { "" }
-                        if (text.isNotBlank()) handler.post { if (!destroyed && !busy) handleRecognized(text) }
+                        if (text.isNotBlank()) {
+                            handler.post { if (!destroyed && !busy) handleRecognized(text) }
+                        } else if (listeningDuckRequested) {
+                            handler.post { if (!destroyed && !busy) abandonSpeechAudioFocus() }
+                        }
+                        listeningDuckRequested = false
                     }
                 } catch (e: Exception) { Log.e(TAG, "Vosk audio decode failed: ${e.javaClass.simpleName}"); break }
             }
@@ -318,6 +328,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             val utterance = ArrayList<Float>(16_000 * 6)
             var speaking = false
             var silenceSamples = 0
+            var listeningDuckRequested = false
             val noiseGate = AdaptiveNoiseGate()
             while (sherpaRunning && !destroyed) {
                 val count = try { recorder.read(buffer, 0, buffer.size) } catch (_: Exception) { -1 }
@@ -327,6 +338,10 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 for (i in 0 until count) energy += buffer[i].toDouble() * buffer[i].toDouble()
                 val rms = kotlin.math.sqrt(energy / count).toInt()
                 if (noiseGate.isSpeech(rms)) {
+                    if (!speaking && !listeningDuckRequested) {
+                        listeningDuckRequested = true
+                        handler.post { if (!destroyed) requestSpeechAudioFocus() }
+                    }
                     speaking = true
                     silenceSamples = 0
                     for (i in 0 until count) utterance.add(buffer[i] / 32768.0f)
@@ -380,6 +395,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             sherpaProcessing = false
             Log.d(TAG, "Sherpa final result chars=${recognized.length}")
             if (!destroyed && !busy && recognized.isNotBlank()) handleRecognized(recognized)
+            else if (!destroyed && !busy) abandonSpeechAudioFocus()
         }
     }
     private fun normalize(s: String): String = s
