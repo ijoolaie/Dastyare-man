@@ -1,6 +1,8 @@
 package ir.dastyar.bridge
 
 import android.app.*
+import android.media.AudioAttributes
+import android.media.AudioTrack
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -11,10 +13,16 @@ import android.speech.tts.*
 import androidx.core.app.NotificationCompat
 import org.json.*
 import com.k2fsa.sherpa.onnx.OfflineRecognizer
+import com.k2fsa.sherpa.onnx.OfflineTts
+import com.k2fsa.sherpa.onnx.OfflineTtsConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsModelConfig
+import com.k2fsa.sherpa.onnx.OfflineTtsVitsModelConfig
+import com.k2fsa.sherpa.onnx.GenerationConfig
 import org.vosk.Model
 import org.vosk.Recognizer
 import org.vosk.android.RecognitionListener
 import org.vosk.android.SpeechService
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.nio.charset.StandardCharsets
@@ -37,6 +45,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     private var modelLoader: Thread? = null
     private var tts: TextToSpeech? = null
     private var ttsReady = false
+    @Volatile private var offlineTts: OfflineTts? = null
+    @Volatile private var offlineTtsLoading = false
     private var pendingSpeech: String? = null
     @Volatile private var busy = false
     private var activeUntil = 0L
@@ -95,8 +105,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     override fun onInit(status: Int) {
         Log.i(TAG, "TTS engine init status=$status")
         if (status != TextToSpeech.SUCCESS) {
-            Log.e(TAG, "TTS engine initialization failed")
-            updateNotification("موتور تبدیل متن به گفتار در دسترس نیست")
+            Log.e(TAG, "TTS engine initialization failed; using offline Persian voice")
+            loadOfflineTtsAsync()
             return
         }
         var language = tts?.setLanguage(Locale("fa", "IR")) ?: TextToSpeech.LANG_NOT_SUPPORTED
@@ -310,25 +320,114 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             sendToChat(text)
         }
     }
-    private fun speak(text: String) {
-        if (!ttsReady) {
-            pendingSpeech = text
-            Log.w(TAG, "TTS unavailable; resume microphone and keep response in local history")
-            resumeListening()
-            updateNotification("صدای فارسی در دسترس نیست؛ پاسخ در تاریخچه ذخیره شد")
-            return
-        }
-        if (text.isBlank()) { resumeListening(); return }
+    private fun loadOfflineTtsAsync() {
+        if (offlineTts != null || offlineTtsLoading || destroyed) return
+        offlineTtsLoading = true
+        Thread {
+            try {
+                val dir = PersianTtsModel.ensureInstalled(this,
+                    { percent -> handler.post { if (!destroyed) updateNotification("Downloading Persian voice model: $percent%") } },
+                    { destroyed || Thread.currentThread().isInterrupted })
+                val config = OfflineTtsConfig(
+                    model = OfflineTtsModelConfig(
+                        vits = OfflineTtsVitsModelConfig(
+                            model = File(dir, "fa_IR-gyro-medium.onnx").absolutePath,
+                            tokens = File(dir, "tokens.txt").absolutePath,
+                            dataDir = File(dir, "espeak-ng-data").absolutePath
+                        ),
+                        numThreads = 2,
+                        debug = false
+                    ),
+                    maxNumSentences = 1
+                )
+                val engine = OfflineTts(config)
+                handler.post {
+                    offlineTtsLoading = false
+                    if (destroyed) { engine.release(); return@post }
+                    offlineTts = engine
+                    Log.i(TAG, "Offline Persian TTS ready")
+                    pendingSpeech?.let { pendingSpeech = null; speak(it) }
+                    updateNotification("Offline Persian voice is ready")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Offline Persian TTS initialization failed: ${e.javaClass.simpleName}")
+                handler.post {
+                    offlineTtsLoading = false
+                    if (!destroyed) {
+                        updateNotification("Persian voice unavailable; check internet and storage")
+                        pendingSpeech = null
+                        resumeListening()
+                    }
+                }
+            }
+        }.apply { name = "raya-persian-tts-loader"; start() }
+    }
+
+    private fun playOfflineSpeech(text: String) {
+        val clean = text.replace(Regex("https?://\\S+"), " ")
+            .replace(Regex("[#*_>|]"), " ").replace(Regex("\\s+"), " ").trim().take(3500)
+        if (clean.isBlank()) { resumeListening(); return }
         busy = true
         speechService?.setPause(true)
         if (offlineRecognizer != null) stopSherpaAudio()
-        updateNotification("رایا در حال پاسخ‌گویی است")
-        val clean = text.replace(Regex("https?://\\S+"), " ").replace(Regex("[#*_>|]"), " ")
-            .replace(Regex("\\s+"), " ").trim().take(3500)
-        if (tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString()) == TextToSpeech.ERROR)
-            resumeListening()
+        updateNotification("Raya is speaking Persian")
+        Thread {
+            var track: AudioTrack? = null
+            try {
+                val engine = offlineTts ?: throw IllegalStateException("Offline Persian TTS is not ready")
+                val audio = engine.generateWithConfig(clean, GenerationConfig(sid = 0, speed = 1.0f, silenceScale = 0.2f))
+                val samples = audio.samples
+                val sampleRate = audio.sampleRate
+                if (samples.isEmpty() || sampleRate <= 0) throw IllegalStateException("TTS returned empty audio")
+                val minBuffer = AudioTrack.getMinBufferSize(sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT)
+                if (minBuffer <= 0) throw IllegalStateException("Audio output is unavailable")
+                track = AudioTrack.Builder()
+                    .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                    .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setSampleRate(sampleRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
+                    .setBufferSizeInBytes(maxOf(minBuffer, 8192))
+                    .setTransferMode(AudioTrack.MODE_STREAM).build()
+                track.play()
+                val pcm = ShortArray(4096)
+                var offset = 0
+                while (offset < samples.size && !destroyed) {
+                    val count = minOf(pcm.size, samples.size - offset)
+                    for (i in 0 until count) pcm[i] = (samples[offset + i].coerceIn(-1.0f, 1.0f) * 32767.0f).toInt().toShort()
+                    val written = track.write(pcm, 0, count, AudioTrack.WRITE_BLOCKING)
+                    if (written <= 0) throw IllegalStateException("AudioTrack write failed: $written")
+                    offset += written
+                }
+                if (!destroyed) track.stop()
+                Log.i(TAG, "Offline Persian TTS playback completed samples=${samples.size}")
+            } catch (e: Exception) {
+                Log.e(TAG, "Offline Persian TTS playback failed: ${e.javaClass.simpleName}")
+            } finally {
+                try { track?.release() } catch (_: Exception) {}
+                handler.post { if (!destroyed) resumeListening() }
+            }
+        }.apply { name = "raya-persian-tts-playback"; start() }
     }
 
+    private fun speak(text: String) {
+        if (text.isBlank()) { resumeListening(); return }
+        if (ttsReady) {
+            busy = true
+            speechService?.setPause(true)
+            if (offlineRecognizer != null) stopSherpaAudio()
+            updateNotification("Raya is speaking")
+            val clean = text.replace(Regex("https?://\\S+"), " ").replace(Regex("[#*_>|]"), " ")
+                .replace(Regex("\\s+"), " ").trim().take(3500)
+            if (tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString()) == TextToSpeech.ERROR)
+                resumeListening()
+            return
+        }
+        if (offlineTts != null) { playOfflineSpeech(text); return }
+        pendingSpeech = text
+        loadOfflineTtsAsync()
+        resumeListening()
+        updateNotification("Preparing offline Persian voice")
+    }
     private fun sendToChat(message: String) {
         if (busy) return
         busy = true
@@ -431,6 +530,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         offlineRecognizer = null
         try { tts?.stop(); tts?.shutdown() } catch (_: Exception) {}
         tts = null
+        try { offlineTts?.release() } catch (_: Exception) {}
+        offlineTts = null
         super.onDestroy()
     }
 }
