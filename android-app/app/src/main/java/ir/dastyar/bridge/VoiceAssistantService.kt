@@ -599,6 +599,9 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                                 conversationId = it; memory.setProfile("voice_server_conversation_id", it)
                             }
                             "delta" -> answer += ev.optString("text")
+                            "tool" -> ev.optJSONObject("event")?.let { tool ->
+                                Log.i(TAG, "Chat tool event tool=${tool.optString("tool")} ok=${tool.optBoolean("ok")} durationMs=${tool.optLong("durationMs")}")
+                            }
                             "done" -> {
                                 ev.optString("conversationId").takeIf { it.isNotBlank() }?.let {
                                     conversationId = it; memory.setProfile("voice_server_conversation_id", it)
