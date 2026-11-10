@@ -6,6 +6,7 @@ import android.media.AudioRecord
 import android.media.MediaRecorder
 import android.content.Intent
 import android.os.*
+import android.util.Log
 import android.speech.tts.*
 import androidx.core.app.NotificationCompat
 import org.json.*
@@ -26,6 +27,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         private const val CHANNEL = "raya_voice"
         private const val NOTIFICATION_ID = 43
         private const val SESSION_MS = 45_000L
+        private const val TAG = "RayaVoice"
     }
 
     private val handler = Handler(Looper.getMainLooper())
@@ -50,17 +52,20 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         override fun onPartialResult(hypothesis: String?) {}
         override fun onResult(hypothesis: String?) {
             val text = try { JSONObject(hypothesis ?: "{}").optString("text") } catch (_: Exception) { "" }
+            Log.d(TAG, "Vosk final result chars=${text.length}")
             handler.post { handleRecognized(text) }
         }
         override fun onFinalResult(hypothesis: String?) {}
         override fun onError(exception: Exception?) {
+            Log.e(TAG, "Vosk recognition error: ${exception?.javaClass?.simpleName ?: "unknown"}")
             handler.post { if (!destroyed) { updateNotification("خطای تشخیص صدا؛ تلاش مجدد..."); handler.postDelayed({ restartVoskListening() }, 1200) } }
         }
-        override fun onTimeout() { handler.post { restartVoskListening() } }
+        override fun onTimeout() { Log.w(TAG, "Vosk recognition timeout; restarting"); handler.post { restartVoskListening() } }
     }
 
     override fun onCreate() {
         super.onCreate()
+        Log.i(TAG, "Voice service created")
         foreground()
         tts = TextToSpeech(this, this)
         conversationId = RayaMemoryStore(this).getProfile("voice_conversation_id").takeIf { it.isNotBlank() }
@@ -80,14 +85,20 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onInit(status: Int) {
+        Log.i(TAG, "TTS engine init status=$status")
         if (status != TextToSpeech.SUCCESS) {
+            Log.e(TAG, "TTS engine initialization failed")
             updateNotification("موتور تبدیل متن به گفتار در دسترس نیست")
             return
         }
         var language = tts?.setLanguage(Locale("fa", "IR")) ?: TextToSpeech.LANG_NOT_SUPPORTED
-        if (language < TextToSpeech.LANG_AVAILABLE)
+        Log.i(TAG, "TTS fa-IR language availability=$language")
+        if (language < TextToSpeech.LANG_AVAILABLE) {
             language = tts?.setLanguage(Locale("fa")) ?: TextToSpeech.LANG_NOT_SUPPORTED
+            Log.i(TAG, "TTS fa language availability=$language")
+        }
         ttsReady = language >= TextToSpeech.LANG_AVAILABLE
+        Log.i(TAG, "Persian TTS ready=$ttsReady code=$language")
         if (ttsReady) {
             tts?.setSpeechRate(1.0f)
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -102,6 +113,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     private fun loadModelAsync() {
         if (modelLoader != null || speechService != null || offlineRecognizer != null || destroyed) return
         val selected = VoiceModel.fromId(Prefs.voiceModel(this))
+        Log.i(TAG, "Loading ASR model id=${selected.id}")
         updateNotification("در حال آماده‌سازی مدل ${selected.title}")
         modelLoader = Thread {
             var loadedModel: Model? = null
@@ -127,6 +139,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         try { loadedSpeech?.stop(); loadedSpeech?.shutdown(); loadedRecognizer?.close(); loadedModel?.close(); loadedOffline?.release() } catch (_: Exception) {}
                         return@post
                     }
+                    Log.i(TAG, "ASR model loaded id=${selected.id}")
                     model = loadedModel
                     recognizer = loadedRecognizer
                     speechService = loadedSpeech
@@ -233,6 +246,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         handler.post {
             sherpaProcessing = false
+            Log.d(TAG, "Sherpa final result chars=${recognized.length}")
             if (!destroyed && !busy && recognized.isNotBlank()) handleRecognized(recognized)
         }
     }
@@ -251,6 +265,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         if (text.isBlank()) return
         val wakeWord = "\u0631\u0627\u06CC\u0627"
         val wake = text.indexOf(wakeWord)
+        Log.d(TAG, "Speech segment chars=${text.length}; wakeDetected=${wake >= 0}; activeSession=${SystemClock.elapsedRealtime() < activeUntil}")
         if (wake >= 0) {
             activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
             val command = text.substring(wake + wakeWord.length).trim()
@@ -261,7 +276,13 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
     }
     private fun speak(text: String) {
-        if (!ttsReady) { pendingSpeech = text; updateNotification("صدای فارسی در موتور گفتار گوشی در دسترس نیست"); return }
+        if (!ttsReady) {
+            pendingSpeech = text
+            Log.w(TAG, "TTS unavailable; resume microphone and keep response in local history")
+            resumeListening()
+            updateNotification("صدای فارسی در دسترس نیست؛ پاسخ در تاریخچه ذخیره شد")
+            return
+        }
         if (text.isBlank()) { resumeListening(); return }
         busy = true
         speechService?.setPause(true)
@@ -296,7 +317,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     setRequestProperty("Accept", "text/event-stream, application/json")
                 }
                 conn.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
-                if (conn.responseCode !in 200..299) throw Exception("خطای سرور ${conn.responseCode}")
+                Log.i(TAG, "Chat HTTP status=${conn.responseCode}")
+                if (conn.responseCode !in 200..299) throw Exception("HTTP ${conn.responseCode}")
                 conn.inputStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
                     lines.forEach { line ->
                         val payload = line.trim().removePrefix("data:").trim()
@@ -319,7 +341,10 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 }
                 if (answer.isBlank()) throw Exception("پاسخ متنی از سرور دریافت نشد")
                 memory.addTurn(conversationId, "assistant", answer)
-            } catch (e: Exception) { failure = e.message ?: "ارتباط با رایا ناموفق بود" }
+            } catch (e: Exception) {
+                Log.e(TAG, "Chat request failed: ${e.javaClass.simpleName}")
+                failure = e.message ?: "ارتباط با سرور ناموفق بود"
+            }
             handler.post {
                 busy = false
                 if (destroyed) return@post
