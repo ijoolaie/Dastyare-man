@@ -26,7 +26,7 @@ class BridgeService : Service() {
         private const val POLL_WAIT_S = 25
         private const val TAG = "RayaBridge"
         val CAPS = listOf(
-            "sysinfo", "battery", "vibrate", "notify", "clipboard_write", "clipboard_read",
+            "sysinfo", "device_status", "battery", "brightness", "ringer", "vibrate", "notify", "clipboard_write", "clipboard_read",
             "open_url", "open_app", "apps", "media", "volume", "flashlight",
             "geolocation", "sms_send", "contacts", "call", "notifications"
         )

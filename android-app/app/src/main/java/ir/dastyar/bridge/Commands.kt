@@ -16,6 +16,8 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.location.LocationManager
 import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
@@ -26,6 +28,7 @@ import android.util.Log
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.ContactsContract
+import android.provider.Settings
 import android.provider.Telephony
 import android.telephony.SmsManager
 import android.view.KeyEvent
@@ -60,6 +63,9 @@ object Commands {
         return try {
             val result = when (action) {
                 "sysinfo" -> sysinfo(ctx)
+                "device_status" -> deviceStatus(ctx)
+                "brightness" -> brightness(ctx, args)
+                "ringer" -> ringer(ctx, args)
                 "battery" -> battery(ctx)
                 "vibrate" -> vibrate(ctx, args)
                 "notify" -> notifyPhone(ctx, args)
@@ -124,6 +130,85 @@ object Commands {
         return Pair(true, info.joinToString("\n"))
     }
 
+
+    private fun deviceStatus(ctx: Context): Pair<Boolean, String> {
+        val (pct, charging) = batteryInfo(ctx)
+        val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        val ringer = when (audio?.ringerMode) {
+            AudioManager.RINGER_MODE_SILENT -> "silent"
+            AudioManager.RINGER_MODE_VIBRATE -> "vibrate"
+            AudioManager.RINGER_MODE_NORMAL -> "normal"
+            else -> "unknown"
+        }
+        val brightness = try {
+            Settings.System.getInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
+                .let { (it * 100 / 255).coerceIn(0, 100) }
+        } catch (_: Exception) { -1 }
+        val cm = ctx.getSystemService(ConnectivityManager::class.java)
+        val network = cm?.activeNetwork
+        val caps = if (cm != null && network != null) cm.getNetworkCapabilities(network) else null
+        val connection = when {
+            caps == null -> "offline"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "mobile data"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+            else -> "connected"
+        }
+        val (level, isCharging) = batteryInfo(ctx)
+        return Pair(true, "Device: ${Build.MANUFACTURER} ${Build.MODEL}; Android ${Build.VERSION.RELEASE}; battery $level%${if (isCharging) " (charging)" else ""}; network $connection; ringer $ringer; brightness ${if (brightness >= 0) "$brightness%" else "unavailable"}")
+    }
+
+    private fun brightness(ctx: Context, args: JSONObject): Pair<Boolean, String> {
+        val current = try {
+            Settings.System.getInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
+                .let { (it * 100 / 255).coerceIn(0, 100) }
+        } catch (_: Exception) { -1 }
+        if (!args.has("level")) {
+            return if (current >= 0) Pair(true, "Screen brightness is $current%")
+            else Pair(false, "Screen brightness is unavailable")
+        }
+        val level = args.optInt("level", -1)
+        if (level !in 0..100) return Pair(false, "level must be between 0 and 100")
+        if (!Settings.System.canWrite(ctx)) {
+            return try {
+                val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${ctx.packageName}"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                ctx.startActivity(intent)
+                Pair(false, "Allow Dastyar to modify system settings, then repeat the brightness command")
+            } catch (_: Exception) {
+                Pair(false, "Enable Modify system settings for Dastyar in Android Settings")
+            }
+        }
+        Settings.System.putInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+        Settings.System.putInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS, (level * 255 / 100).coerceIn(0, 255))
+        return Pair(true, "Screen brightness set to $level%")
+    }
+
+    private fun ringer(ctx: Context, args: JSONObject): Pair<Boolean, String> {
+        val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            ?: return Pair(false, "Audio service is unavailable")
+        val requested = args.optString("mode", "status").lowercase(Locale.US)
+        val mode = when (requested) {
+            "status", "" -> return Pair(true, "Ringer mode: ${when (audio.ringerMode) { AudioManager.RINGER_MODE_SILENT -> "silent"; AudioManager.RINGER_MODE_VIBRATE -> "vibrate"; else -> "normal" }}")
+            "normal", "ring" -> AudioManager.RINGER_MODE_NORMAL
+            "vibrate", "vibration" -> AudioManager.RINGER_MODE_VIBRATE
+            "silent", "mute" -> AudioManager.RINGER_MODE_SILENT
+            else -> return Pair(false, "mode must be status, normal, vibrate or silent")
+        }
+        if (mode == AudioManager.RINGER_MODE_SILENT) {
+            val nm = ctx.getSystemService(NotificationManager::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && nm?.isNotificationPolicyAccessGranted != true) {
+                return try {
+                    ctx.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    Pair(false, "Allow Dastyar to control Do Not Disturb, then repeat the command")
+                } catch (_: Exception) {
+                    Pair(false, "Enable DND access for Dastyar in Android Settings")
+                }
+            }
+        }
+        audio.ringerMode = mode
+        return Pair(true, "Ringer mode set to $requested")
+    }
     // ── ویبره و اعلان ────────────────────────────────────────────
 
     private fun vibrate(ctx: Context, args: JSONObject): Pair<Boolean, String> {
