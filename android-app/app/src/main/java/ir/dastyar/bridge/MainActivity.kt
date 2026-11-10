@@ -253,7 +253,7 @@ class MainActivity : AppCompatActivity() {
         val selected = models.indexOf(VoiceModel.fromId(Prefs.voiceModel(this))).coerceAtLeast(0)
         AlertDialog.Builder(this)
             .setTitle("مدل تشخیص گفتار")
-            .setMessage("مدل انتخابی فقط برای بار اول دانلود می‌شود؛ پس از نصب، تشخیص گفتار روی گوشی و بدون اینترنت انجام می‌شود. مدل‌ها فضای ذخیره‌سازی جداگانه مصرف می‌کنند.")
+            .setTitle("مدل تشخیص گفتار را انتخاب کن")
             .setSingleChoiceItems(labels, selected) { dialog, which ->
                 val model = models[which]
                 Prefs.setVoiceModel(this, model.id)
