@@ -620,6 +620,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun requestSpeechAudioFocus() {
+        if (speechAudioFocusRequest != null) return
         if (Build.VERSION.SDK_INT < 26) return
         try {
             val manager = getSystemService(AudioManager::class.java)
