@@ -6,6 +6,9 @@ import android.media.AudioManager
 import android.media.MediaPlayer
 import android.media.ToneGenerator
 import android.media.AudioTrack
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.NoiseSuppressor
+import android.media.audiofx.AutomaticGainControl
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
@@ -66,6 +69,12 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var sherpaRunning = false
     @Volatile private var sherpaProcessing = false
     private var audioRecord: AudioRecord? = null
+    private var echoCanceler: AcousticEchoCanceler? = null
+    private var noiseSuppressor: NoiseSuppressor? = null
+    private var automaticGainControl: AutomaticGainControl? = null
+    private var speechAudioFocusRequest: android.media.AudioFocusRequest? = null
+    @Volatile private var voskAudioRunning = false
+    private var voskAudioThread: Thread? = null
     private var sherpaThread: Thread? = null
     @Volatile private var destroyed = false
 
@@ -130,6 +139,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         ttsReady = language >= TextToSpeech.LANG_AVAILABLE
         Log.i(TAG, "Persian TTS ready=$ttsReady code=$language")
+        try { tts?.setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT).setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()) } catch (_: Exception) {}
         if (ttsReady) {
             tts?.setSpeechRate(1.0f)
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
@@ -145,7 +155,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun loadModelAsync() {
-        if (modelLoader != null || speechService != null || offlineRecognizer != null || destroyed) return
+        if (modelLoader != null || speechService != null || recognizer != null || offlineRecognizer != null || destroyed) return
         val selected = VoiceModel.fromId(Prefs.voiceModel(this))
         Log.i(TAG, "Loading ASR model id=${selected.id}")
         updateNotification("در حال آماده‌سازی مدل ${selected.title}")
@@ -162,7 +172,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     if (destroyed) return@Thread
                     loadedModel = Model(dir.absolutePath)
                     loadedRecognizer = Recognizer(loadedModel, 16_000.0f)
-                    loadedSpeech = SpeechService(loadedRecognizer, 16_000.0f)
+                    loadedSpeech = null
                 } else {
                     loadedOffline = VoiceModelInstaller.createSherpaRecognizer(this, selected, { status ->
                         handler.post { if (!destroyed) updateNotification(status) }
@@ -180,8 +190,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     offlineRecognizer = loadedOffline
                     modelLoader = null
                     if (selected == VoiceModel.VOSK) {
-                        speechService?.startListening(voskListener)
-                        setListeningCue(true)
+                        startVoskAudio()
                     } else {
                         startSherpaAudio()
                     }
@@ -197,11 +206,59 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }.apply { name = "raya-${selected.id}-model-loader"; start() }
     }
 
+    private fun startVoskAudio() {
+        if (destroyed || busy || voskAudioRunning || recognizer == null) return
+        val minBuffer = AudioRecord.getMinBufferSize(16_000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
+        if (minBuffer <= 0) { updateNotification("میکروفون در دسترس نیست"); return }
+        val recorder = try {
+            AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, 16_000, AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer * 2, 6_400))
+        } catch (e: Exception) { updateNotification("راه‌اندازی میکروفون ناموفق بود: ${e.message}"); return }
+        if (recorder.state != AudioRecord.STATE_INITIALIZED) { recorder.release(); return }
+        try {
+            if (AcousticEchoCanceler.isAvailable()) echoCanceler = AcousticEchoCanceler.create(recorder.audioSessionId)?.apply { enabled = true }
+            if (NoiseSuppressor.isAvailable()) noiseSuppressor = NoiseSuppressor.create(recorder.audioSessionId)?.apply { enabled = true }
+            if (AutomaticGainControl.isAvailable()) automaticGainControl = AutomaticGainControl.create(recorder.audioSessionId)?.apply { enabled = true }
+        } catch (e: Exception) { Log.w(TAG, "Vosk audio preprocessing unavailable: ${e.javaClass.simpleName}") }
+        try { recorder.startRecording() } catch (e: Exception) { recorder.release(); return }
+        audioRecord = recorder
+        voskAudioRunning = true
+        setListeningCue(true)
+        voskAudioThread = Thread {
+            val buffer = ShortArray(640)
+            val silence = ShortArray(640)
+            var noiseFloorRms = 180.0
+            while (voskAudioRunning && !destroyed) {
+                val count = try { recorder.read(buffer, 0, buffer.size) } catch (_: Exception) { -1 }
+                if (count <= 0) { if (voskAudioRunning) Thread.sleep(50); continue }
+                if (busy) continue
+                var energy = 0.0
+                for (i in 0 until count) energy += buffer[i].toDouble() * buffer[i].toDouble()
+                val rms = kotlin.math.sqrt(energy / count).toInt()
+                val threshold = maxOf(420.0, noiseFloorRms * 1.75).coerceAtMost(2200.0).toInt()
+                try {
+                    val active = recognizer ?: break
+                    val completed = if (rms >= threshold) {
+                        active.acceptWaveForm(buffer, count)
+                    } else {
+                        noiseFloorRms = noiseFloorRms * 0.96 + rms * 0.04
+                        active.acceptWaveForm(silence, count)
+                    }
+                    if (completed) {
+                        val text = try { JSONObject(active.result).optString("text") } catch (_: Exception) { "" }
+                        if (text.isNotBlank()) handler.post { if (!destroyed && !busy) handleRecognized(text) }
+                    }
+                } catch (e: Exception) { Log.e(TAG, "Vosk audio decode failed: ${e.javaClass.simpleName}"); break }
+            }
+            try { recorder.stop() } catch (_: Exception) {}
+            recorder.release()
+        }.apply { name = "raya-vosk-microphone"; start() }
+        updateNotification("در حال گوش‌دادن به فرمان صوتی")
+    }
     private fun restartVoskListening() {
         if (destroyed || busy || VoiceModel.fromId(Prefs.voiceModel(this)) != VoiceModel.VOSK) return
         try {
-            speechService?.startListening(voskListener)
-            setListeningCue(true)
+            startVoskAudio()
         } catch (_: Exception) {
             handler.postDelayed({ if (!destroyed && !busy) restartVoskListening() }, 1800)
         }
@@ -218,6 +275,11 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         if (recorder.state != AudioRecord.STATE_INITIALIZED) {
             recorder.release(); updateNotification("میکروفون قابل راه‌اندازی نیست"); return
         }
+        try {
+            if (AcousticEchoCanceler.isAvailable()) echoCanceler = AcousticEchoCanceler.create(recorder.audioSessionId)?.apply { enabled = true }
+            if (NoiseSuppressor.isAvailable()) noiseSuppressor = NoiseSuppressor.create(recorder.audioSessionId)?.apply { enabled = true }
+            if (AutomaticGainControl.isAvailable()) automaticGainControl = AutomaticGainControl.create(recorder.audioSessionId)?.apply { enabled = true }
+        } catch (e: Exception) { Log.w(TAG, "Audio preprocessing unavailable: ${e.javaClass.simpleName}") }
         try { recorder.startRecording() } catch (e: Exception) {
             recorder.release(); updateNotification("شروع ضبط صدا ناموفق بود: ${e.message}"); return
         }
@@ -229,6 +291,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             val utterance = ArrayList<Float>(16_000 * 6)
             var speaking = false
             var silenceSamples = 0
+            var noiseFloorRms = 180.0
             while (sherpaRunning && !destroyed) {
                 val count = try { recorder.read(buffer, 0, buffer.size) } catch (_: Exception) { -1 }
                 if (count <= 0) { if (sherpaRunning) Thread.sleep(80); continue }
@@ -236,13 +299,16 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 var energy = 0.0
                 for (i in 0 until count) energy += buffer[i].toDouble() * buffer[i].toDouble()
                 val rms = kotlin.math.sqrt(energy / count).toInt()
-                if (rms >= 360) {
+                val speechThreshold = maxOf(420.0, noiseFloorRms * 1.75).coerceAtMost(2200.0).toInt()
+                if (rms >= speechThreshold) {
                     speaking = true
                     silenceSamples = 0
                     for (i in 0 until count) utterance.add(buffer[i] / 32768.0f)
                 } else if (speaking) {
                     silenceSamples += count
                     for (i in 0 until count) utterance.add(buffer[i] / 32768.0f)
+                } else {
+                    noiseFloorRms = (noiseFloorRms * 0.96) + (rms * 0.04)
                 }
                 if (speaking && (silenceSamples >= 12_800 || utterance.size >= 128_000)) {
                     if (utterance.size >= 4_800 && !sherpaProcessing) {
@@ -264,6 +330,9 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         val recorder = audioRecord
         audioRecord = null
         try { recorder?.stop() } catch (_: Exception) {}
+        try { echoCanceler?.release() } catch (_: Exception) {}; echoCanceler = null
+        try { noiseSuppressor?.release() } catch (_: Exception) {}; noiseSuppressor = null
+        try { automaticGainControl?.release() } catch (_: Exception) {}; automaticGainControl = null
         val thread = sherpaThread
         if (thread != null && thread !== Thread.currentThread()) {
             try { thread.join(700) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
@@ -387,6 +456,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun playOfflineSpeech(text: String) {
+        requestSpeechAudioFocus()
         setListeningCue(false)
         val clean = text.replace(Regex("https?://\\S+"), " ")
             .replace(Regex("[#*_>|]"), " ").replace(Regex("\\s+"), " ").trim().take(3500)
@@ -440,6 +510,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         val clean = text.replace(Regex("https?://\\S+"), " ")
             .replace(Regex("[#*_>|]"), " ").replace(Regex("\\s+"), " ").trim().take(3500)
         if (clean.isBlank()) { resumeListening(); return }
+        requestSpeechAudioFocus()
         setListeningCue(false)
         when (TtsVoice.fromId(voiceOverride ?: Prefs.ttsVoice(this))) {
             TtsVoice.EDGE_FARID, TtsVoice.EDGE_DILARA -> {
@@ -548,6 +619,30 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
+    private fun requestSpeechAudioFocus() {
+        if (Build.VERSION.SDK_INT < 26) return
+        try {
+            val manager = getSystemService(AudioManager::class.java)
+            val request = android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
+                .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
+                .setAcceptsDelayedFocusGain(false)
+                .setOnAudioFocusChangeListener { change ->
+                    if (change == AudioManager.AUDIOFOCUS_LOSS) Log.w(TAG, "Speech audio focus lost")
+                }.build()
+            val result = manager.requestAudioFocus(request)
+            if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) speechAudioFocusRequest = request
+            Log.d(TAG, "Speech audio focus result=$result")
+        } catch (e: Exception) { Log.w(TAG, "Speech audio focus unavailable: ${e.javaClass.simpleName}") }
+    }
+
+    private fun abandonSpeechAudioFocus() {
+        if (Build.VERSION.SDK_INT < 26) return
+        val request = speechAudioFocusRequest ?: return
+        try { getSystemService(AudioManager::class.java).abandonAudioFocusRequest(request) }
+        catch (e: Exception) { Log.w(TAG, "Audio focus release failed: ${e.javaClass.simpleName}") }
+        speechAudioFocusRequest = null
+    }
     private fun setListeningCue(listening: Boolean) {
         if (listeningCueState == listening) return
         val wasListening = listeningCueState
@@ -576,19 +671,33 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             val memory = RayaMemoryStore(this)
             try {
                 memory.addTurn(voiceHistoryId, "user", message)
-                val previousTurns = memory.turnsForConversation(voiceHistoryId, 7).dropLast(1).joinToString(" | ") { "${it.role}: ${it.content.take(500)}" }
+                val previousTurns = memory.turnsForConversation(voiceHistoryId, 4).dropLast(1).joinToString(" | ") { "${it.role}: ${it.content.take(260)}" }
                 val context = memory.personaContext(message) + if (previousTurns.isBlank()) "" else " Previous voice turns: $previousTurns"
                 val contextualMessage = context + " Current user message: " + message
                 val body = JSONObject().put("conversationId", conversationId ?: JSONObject.NULL)
                     .put("message", contextualMessage).put("attachmentIds", JSONArray())
-                val conn = (URL(Prefs.serverUrl(this) + "/api/chat").openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"; connectTimeout = 20_000; readTimeout = 120_000; doOutput = true
-                    setRequestProperty("Content-Type", "application/json; charset=utf-8")
-                    setRequestProperty("Accept", "text/event-stream, application/json")
+                var conn: HttpURLConnection
+                var attempt = 0
+                while (true) {
+                    conn = (URL(Prefs.serverUrl(this) + "/api/chat").openConnection() as HttpURLConnection).apply {
+                        requestMethod = "POST"; connectTimeout = 15_000; readTimeout = 120_000; doOutput = true
+                        setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                        setRequestProperty("Accept", "text/event-stream, application/json")
+                    }
+                    conn.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
+                    val status = conn.responseCode
+                    Log.i(TAG, "Chat HTTP status=$status attempt=${attempt + 1}")
+                    if (status in 200..299) break
+                    conn.disconnect()
+                    val retryable = status == 429 || status == 502 || status == 503 || status == 504
+                    if (retryable && attempt < 2) {
+                        attempt++
+                        Thread.sleep(900L * attempt)
+                        continue
+                    }
+                    if (retryable) throw Exception("SERVER_BUSY: The AI server is temporarily busy. Please try again shortly.")
+                    throw Exception("HTTP $status")
                 }
-                conn.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
-                Log.i(TAG, "Chat HTTP status=${conn.responseCode}")
-                if (conn.responseCode !in 200..299) throw Exception("HTTP ${conn.responseCode}")
                 conn.inputStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
                     lines.forEach { line ->
                         val payload = line.trim().removePrefix("data:").trim()
@@ -629,9 +738,11 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun resumeListening() {
+        abandonSpeechAudioFocus()
         busy = false
         speechService?.setPause(false)
         if (!destroyed && offlineRecognizer != null) startSherpaAudio()
+        else if (!destroyed && recognizer != null) startVoskAudio()
         else if (!destroyed && speechService != null) setListeningCue(true)
         if (!destroyed) updateNotification("در حال شنیدن؛ برای شروع بگو رایا")
     }
@@ -661,6 +772,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     override fun onDestroy() {
+        abandonSpeechAudioFocus()
         destroyed = true
         setListeningCue(false)
         try { edgePlayer?.release() } catch (_: Exception) {}
@@ -671,7 +783,14 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             try { toneGenerator?.release() } catch (_: Exception) {}
             toneGenerator = null
         }, 260)
+        voskAudioRunning = false
+        try { audioRecord?.stop() } catch (_: Exception) {}
+        try { voskAudioThread?.join(700) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+        voskAudioThread = null
         stopSherpaAudio()
+        try { echoCanceler?.release() } catch (_: Exception) {}; echoCanceler = null
+        try { noiseSuppressor?.release() } catch (_: Exception) {}; noiseSuppressor = null
+        try { automaticGainControl?.release() } catch (_: Exception) {}; automaticGainControl = null
         try { modelLoader?.interrupt() } catch (_: Exception) {}
         try { speechService?.stop(); speechService?.shutdown(); recognizer?.close(); model?.close() } catch (_: Exception) {}
         speechService = null; recognizer = null; model = null
