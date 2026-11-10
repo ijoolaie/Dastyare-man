@@ -238,8 +238,9 @@ class MainActivity : AppCompatActivity() {
             "هویت و حافظه رایا",
             "تاریخچه مکالمات صوتی",
             "بهینه‌سازی باتری",
-            "تغییر اتصال یا قطع اتصال",
-            "Notification access"
+            "فعال‌سازی کنترل خاموش/روشن صفحه",
+            "دسترسی اعلان‌ها",
+            "تغییر اتصال یا قطع اتصال"
         )
         AlertDialog.Builder(this)
             .setTitle("تنظیمات دستیار من")
@@ -250,25 +251,32 @@ class MainActivity : AppCompatActivity() {
                     2 -> openMemorySettings()
                     3 -> openVoiceHistory()
                     4 -> openBatterySettings()
-                    5 -> openNotificationAccessSettings()
-                    6 -> {
-                        AlertDialog.Builder(this)
-                            .setTitle("Disconnect this device?")
-                            .setMessage("This will erase the saved server address and device token. You will need to pair the app again to reconnect.")
-                            .setNegativeButton("Cancel", null)
-                            .setPositiveButton("Disconnect") { _, _ ->
-                                stopService(Intent(this, VoiceAssistantService::class.java))
-                                stopService(Intent(this, BridgeService::class.java))
-                                Prefs.clear(this)
-                                recreate()
-                            }
-                            .show()
-                    }
+                    5 -> openScreenControlSettings()
+                    6 -> openNotificationAccessSettings()
+                    7 -> AlertDialog.Builder(this)
+                        .setTitle("قطع اتصال دستگاه؟")
+                        .setMessage("با قطع اتصال، نشانی سرور و توکن ذخیره‌شده پاک می‌شود و برای اتصال دوباره باید دستگاه را جفت‌سازی کنی.")
+                        .setNegativeButton("انصراف", null)
+                        .setPositiveButton("قطع اتصال") { _, _ ->
+                            stopService(Intent(this, VoiceAssistantService::class.java))
+                            stopService(Intent(this, BridgeService::class.java))
+                            Prefs.clear(this)
+                            recreate()
+                        }
+                        .show()
                 }
             }
             .show()
     }
 
+    private fun openScreenControlSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            toast("در فهرست سرویس‌های نصب‌شده، Dastyar screen control را پیدا و فعال کن.")
+        } catch (_: Exception) {
+            toast("بازکردن تنظیمات دسترس‌پذیری ممکن نشد؛ از تنظیمات گوشی وارد Accessibility شو.")
+        }
+    }
     private fun openVoiceModelSettings() {
         val models = VoiceModel.values()
         val labels = models.map { it.title }.toTypedArray()

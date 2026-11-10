@@ -25,7 +25,7 @@ object VoiceModelInstaller {
                 val decoder = ensureFile(File(dir, "tiny-decoder.int8.onnx"), WHISPER_BASE + "tiny-decoder.int8.onnx", 10_000_000, progress, cancelled)
                 val tokens = ensureFile(File(dir, "tiny-tokens.txt"), WHISPER_BASE + "tiny-tokens.txt", 100_000, progress, cancelled)
                 OfflineModelConfig(
-                    whisper = OfflineWhisperModelConfig(encoder = encoder.absolutePath, decoder = decoder.absolutePath, language = "fa", task = "transcribe"),
+                    whisper = OfflineWhisperModelConfig(encoder = encoder.absolutePath, decoder = decoder.absolutePath, language = "", task = "transcribe"),
                     tokens = tokens.absolutePath, modelType = "whisper", numThreads = 2, provider = "cpu"
                 )
             }

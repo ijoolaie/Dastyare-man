@@ -16,7 +16,7 @@ object Prefs {
     fun isPaired(c: Context): Boolean = serverUrl(c).isNotEmpty() && token(c).isNotEmpty()
     fun isVoiceEnabled(c: Context): Boolean = sp(c).getBoolean(KEY_VOICE_ENABLED, false)
     fun setVoiceEnabled(c: Context, enabled: Boolean) { sp(c).edit().putBoolean(KEY_VOICE_ENABLED, enabled).apply() }
-    fun voiceModel(c: Context): String = sp(c).getString(KEY_VOICE_MODEL, VoiceModel.VOSK.id) ?: VoiceModel.VOSK.id
+    fun voiceModel(c: Context): String = sp(c).getString(KEY_VOICE_MODEL, VoiceModel.WHISPER.id) ?: VoiceModel.WHISPER.id
     fun setVoiceModel(c: Context, model: String) { sp(c).edit().putString(KEY_VOICE_MODEL, VoiceModel.fromId(model).id).apply() }
     fun ttsVoice(c: Context): String = sp(c).getString(KEY_TTS_VOICE, TtsVoice.EDGE_FARID.id) ?: TtsVoice.EDGE_FARID.id
     fun setTtsVoice(c: Context, voice: String) { sp(c).edit().putString(KEY_TTS_VOICE, TtsVoice.fromId(voice).id).apply() }
@@ -29,7 +29,7 @@ object Prefs {
 
 enum class VoiceModel(val id: String, val title: String) {
     VOSK("vosk", "Vosk فارسی"),
-    WHISPER("whisper_tiny", "Whisper Tiny چندزبانه"),
+    WHISPER("whisper_tiny", "Whisper Tiny — تشخیص خودکار فارسی و انگلیسی"),
     SHENAVA("shenava_rizeh", "Shenava Rizeh فارسی");
 
     companion object {

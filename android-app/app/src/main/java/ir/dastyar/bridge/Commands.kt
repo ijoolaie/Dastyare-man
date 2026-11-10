@@ -445,21 +445,31 @@ object Commands {
         return when (args.optString("state", args.optString("action", "status")).lowercase(Locale.US)) {
             "on", "wake" -> {
                 val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
-                val lock = pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE, "Dastyar:WakeScreen")
-                lock.acquire(5_000L)
-                Pair(true, "Screen wake requested")
+                val lock = pm.newWakeLock(
+                    PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
+                    "Dastyar:WakeScreen"
+                )
+                try {
+                    lock.acquire(3_000L)
+                    SystemClock.sleep(350L)
+                    if (pm.isInteractive) Pair(true, "صفحه گوشی روشن شد")
+                    else Pair(false, "درخواست روشن‌کردن صفحه ارسال شد، اما اندروید روشن‌شدن نمایشگر را تأیید نکرد")
+                } catch (e: Exception) {
+                    Pair(false, "روشن‌کردن صفحه ناموفق بود: ${e.javaClass.simpleName}")
+                } finally {
+                    try { if (lock.isHeld) lock.release() } catch (_: Exception) {}
+                }
             }
             "off", "lock" -> {
-                if (ScreenControlAccessibilityService.lockScreen()) Pair(true, "Screen locked")
+                if (ScreenControlAccessibilityService.isActive() && ScreenControlAccessibilityService.lockScreen()) Pair(true, "صفحه گوشی قفل شد")
                 else {
                     try { ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) { }
-                    Pair(false, "Enable Dastyar screen control in Android Accessibility settings, then repeat the command")
+                    Pair(false, "سرویس Dastyar screen control فعال نیست؛ آن را در تنظیمات دسترس‌پذیری اندروید روشن کن")
                 }
             }
             else -> Pair(false, "state must be on or off")
         }
     }
-
     private fun smsSend(ctx: Context, args: JSONObject): Pair<Boolean, String> {
         var to = args.optString("to", "").trim()
         val contactName = args.optString("contact_name", args.optString("name", "")).trim()
