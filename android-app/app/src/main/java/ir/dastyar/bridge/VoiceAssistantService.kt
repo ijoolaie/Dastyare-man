@@ -40,7 +40,9 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     private var pendingSpeech: String? = null
     @Volatile private var busy = false
     private var activeUntil = 0L
+    // Backend conversation ID and local history ID are deliberately separate.
     private var conversationId: String? = null
+    private var voiceHistoryId: String = ""
     private var offlineRecognizer: OfflineRecognizer? = null
     @Volatile private var sherpaRunning = false
     @Volatile private var sherpaProcessing = false
@@ -68,7 +70,13 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         Log.i(TAG, "Voice service created")
         foreground()
         tts = TextToSpeech(this, this)
-        conversationId = RayaMemoryStore(this).getProfile("voice_conversation_id").takeIf { it.isNotBlank() }
+        val memory = RayaMemoryStore(this)
+        conversationId = (memory.getProfile("voice_server_conversation_id").ifBlank { memory.getProfile("voice_conversation_id") }).takeIf { it.isNotBlank() }
+        voiceHistoryId = memory.getProfile("voice_local_history_id")
+        if (voiceHistoryId.isBlank()) {
+            voiceHistoryId = UUID.randomUUID().toString()
+            memory.setProfile("voice_local_history_id", voiceHistoryId)
+        }
         loadModelAsync()
     }
 
@@ -259,16 +267,40 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         .replace(Regex("\\s+"), " ")
         .trim()
 
+    private fun wakeWordMatch(text: String): IntRange? {
+        val target = "\u0631\u0627\u06cc\u0627" // ????
+        val tokens = Regex("[\\p{L}\\p{N}]+")
+        for (match in tokens.findAll(text)) {
+            val token = match.value
+            if (token == target || token == target + "\u0647") return match.range
+            // Persian ASR occasionally adds/drops one character around short names.
+            if (token.length in 4..5 && editDistanceAtMostOne(token, target)) return match.range
+        }
+        return null
+    }
+
+    private fun editDistanceAtMostOne(a: String, b: String): Boolean {
+        if (kotlin.math.abs(a.length - b.length) > 1) return false
+        var i = 0; var j = 0; var edits = 0
+        while (i < a.length && j < b.length) {
+            if (a[i] == b[j]) { i++; j++ } else {
+                if (++edits > 1) return false
+                if (a.length > b.length) i++ else if (b.length > a.length) j++ else { i++; j++ }
+            }
+        }
+        if (i < a.length || j < b.length) edits++
+        return edits <= 1
+    }
+
     private fun handleRecognized(raw: String) {
         if (destroyed || busy) return
         val text = normalize(raw)
         if (text.isBlank()) return
-        val wakeWord = "\u0631\u0627\u06CC\u0627"
-        val wake = text.indexOf(wakeWord)
-        Log.d(TAG, "Speech segment chars=${text.length}; wakeDetected=${wake >= 0}; activeSession=${SystemClock.elapsedRealtime() < activeUntil}")
-        if (wake >= 0) {
+        val wake = wakeWordMatch(text)
+        Log.d(TAG, "Speech segment chars=${text.length}; wakeDetected=${wake != null}; activeSession=${SystemClock.elapsedRealtime() < activeUntil}")
+        if (wake != null) {
             activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
-            val command = text.substring(wake + wakeWord.length).trim()
+            val command = text.substring(wake.last + 1).trim()
             if (command.isBlank()) speak("بله؟ بگو چه کاری انجام بدهم.") else sendToChat(command)
         } else if (SystemClock.elapsedRealtime() < activeUntil) {
             activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
@@ -305,7 +337,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             var failure: String? = null
             val memory = RayaMemoryStore(this)
             try {
-                memory.addTurn(conversationId, "user", message)
+                memory.addTurn(voiceHistoryId, "user", message)
                 val previousTurns = if (conversationId == null) memory.recentTurns(7).dropLast(1).joinToString(" | ") { "${it.role}: ${it.content.take(500)}" } else ""
                 val context = memory.personaContext() + if (previousTurns.isBlank()) "" else " Previous voice turns: $previousTurns"
                 val contextualMessage = context + " Current user message: " + message
@@ -326,12 +358,12 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         val ev = try { JSONObject(payload) } catch (_: Exception) { null }
                         if (ev != null) when (ev.optString("type")) {
                             "status" -> ev.optString("conversationId").takeIf { it.isNotBlank() }?.let {
-                                conversationId = it; memory.setProfile("voice_conversation_id", it)
+                                conversationId = it; memory.setProfile("voice_server_conversation_id", it)
                             }
                             "delta" -> answer += ev.optString("text")
                             "done" -> {
                                 ev.optString("conversationId").takeIf { it.isNotBlank() }?.let {
-                                    conversationId = it; memory.setProfile("voice_conversation_id", it)
+                                    conversationId = it; memory.setProfile("voice_server_conversation_id", it)
                                 }
                                 ev.optJSONObject("assistantMessage")?.optString("content")?.takeIf { it.isNotBlank() }?.let { answer = it }
                             }
@@ -340,7 +372,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     }
                 }
                 if (answer.isBlank()) throw Exception("پاسخ متنی از سرور دریافت نشد")
-                memory.addTurn(conversationId, "assistant", answer)
+                memory.addTurn(voiceHistoryId, "assistant", answer)
             } catch (e: Exception) {
                 Log.e(TAG, "Chat request failed: ${e.javaClass.simpleName}")
                 failure = e.message ?: "ارتباط با سرور ناموفق بود"
