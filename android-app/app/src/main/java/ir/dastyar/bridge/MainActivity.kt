@@ -233,17 +233,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun openSettings() {
         val options = arrayOf(
-            "انتخاب مدل تشخیص گفتار",
-            "انتخاب صدا و موتور گفتار رایا",
-            "هویت و حافظه رایا",
-            "تاریخچه مکالمات صوتی",
-            "بهینه‌سازی باتری",
-            "فعال‌سازی کنترل خاموش/روشن صفحه",
-            "دسترسی اعلان‌ها",
-            "تغییر اتصال یا قطع اتصال"
+            "\u0627\u0646\u062a\u062e\u0627\u0628 \u0645\u062f\u0644 \u062a\u0634\u062e\u06cc\u0635 \u06af\u0641\u062a\u0627\u0631",
+            "\u0627\u0646\u062a\u062e\u0627\u0628 \u0635\u062f\u0627 \u0648 \u0645\u0648\u062a\u0648\u0631 \u06af\u0641\u062a\u0627\u0631 \u0631\u0627\u06cc\u0627",
+            "\u0647\u0648\u06cc\u062a \u0648 \u062d\u0627\u0641\u0638\u0647 \u0631\u0627\u06cc\u0627",
+            "\u062a\u0627\u0631\u06cc\u062e\u0686\u0647 \u0645\u06a9\u0627\u0644\u0645\u0627\u062a \u0635\u0648\u062a\u06cc",
+            "\u0628\u0647\u06cc\u0646\u0647\u200c\u0633\u0627\u0632\u06cc \u0628\u0627\u062a\u0631\u06cc",
+            "\u0641\u0639\u0627\u0644\u200c\u0633\u0627\u0632\u06cc \u06a9\u0646\u062a\u0631\u0644 \u062e\u0627\u0645\u0648\u0634/\u0631\u0648\u0634\u0646 \u0635\u0641\u062d\u0647",
+            "\u062f\u0633\u062a\u0631\u0633\u06cc \u0627\u0639\u0644\u0627\u0646\u200c\u0647\u0627",
+            "\u062a\u063a\u06cc\u06cc\u0631 \u0627\u062a\u0635\u0627\u0644 \u06cc\u0627 \u0642\u0637\u0639 \u0627\u062a\u0635\u0627\u0644"
         )
         AlertDialog.Builder(this)
-            .setTitle("تنظیمات دستیار من")
+            .setTitle("\u062a\u0646\u0638\u06cc\u0645\u0627\u062a \u062f\u0633\u062a\u06cc\u0627\u0631 \u0645\u0646")
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> openVoiceModelSettings()
@@ -254,10 +254,10 @@ class MainActivity : AppCompatActivity() {
                     5 -> openScreenControlSettings()
                     6 -> openNotificationAccessSettings()
                     7 -> AlertDialog.Builder(this)
-                        .setTitle("قطع اتصال دستگاه؟")
-                        .setMessage("با قطع اتصال، نشانی سرور و توکن ذخیره‌شده پاک می‌شود و برای اتصال دوباره باید دستگاه را جفت‌سازی کنی.")
-                        .setNegativeButton("انصراف", null)
-                        .setPositiveButton("قطع اتصال") { _, _ ->
+                        .setTitle("\u0642\u0637\u0639 \u0627\u062a\u0635\u0627\u0644 \u062f\u0633\u062a\u06af\u0627\u0647\u061f")
+                        .setMessage("\u0628\u0627 \u0642\u0637\u0639 \u0627\u062a\u0635\u0627\u0644\u060c \u0646\u0634\u0627\u0646\u06cc \u0633\u0631\u0648\u0631 \u0648 \u062a\u0648\u06a9\u0646 \u0630\u062e\u06cc\u0631\u0647\u200c\u0634\u062f\u0647 \u067e\u0627\u06a9 \u0645\u06cc\u200c\u0634\u0648\u062f \u0648 \u0628\u0631\u0627\u06cc \u0627\u062a\u0635\u0627\u0644 \u062f\u0648\u0628\u0627\u0631\u0647 \u0628\u0627\u06cc\u062f \u062f\u0633\u062a\u06af\u0627\u0647 \u0631\u0627 \u062c\u0641\u062a\u200c\u0633\u0627\u0632\u06cc \u06a9\u0646\u06cc.")
+                        .setNegativeButton("\u0627\u0646\u0635\u0631\u0627\u0641", null)
+                        .setPositiveButton("\u0642\u0637\u0639 \u0627\u062a\u0635\u0627\u0644") { _, _ ->
                             stopService(Intent(this, VoiceAssistantService::class.java))
                             stopService(Intent(this, BridgeService::class.java))
                             Prefs.clear(this)
@@ -272,9 +272,9 @@ class MainActivity : AppCompatActivity() {
     private fun openScreenControlSettings() {
         try {
             startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-            toast("در فهرست سرویس‌های نصب‌شده، Dastyar screen control را پیدا و فعال کن.")
+            toast("\u062f\u0631 \u0641\u0647\u0631\u0633\u062a \u0633\u0631\u0648\u06cc\u0633\u200c\u0647\u0627\u06cc \u0646\u0635\u0628\u200c\u0634\u062f\u0647\u060c Dastyar screen control \u0631\u0627 \u067e\u06cc\u062f\u0627 \u0648 \u0641\u0639\u0627\u0644 \u06a9\u0646.")
         } catch (_: Exception) {
-            toast("بازکردن تنظیمات دسترس‌پذیری ممکن نشد؛ از تنظیمات گوشی وارد Accessibility شو.")
+            toast("\u0628\u0627\u0632\u06a9\u0631\u062f\u0646 \u062a\u0646\u0638\u06cc\u0645\u0627\u062a \u062f\u0633\u062a\u0631\u0633\u200c\u067e\u0630\u06cc\u0631\u06cc \u0645\u0645\u06a9\u0646 \u0646\u0634\u062f\u061b \u0627\u0632 \u062a\u0646\u0638\u06cc\u0645\u0627\u062a \u06af\u0648\u0634\u06cc \u0648\u0627\u0631\u062f Accessibility \u0634\u0648.")
         }
     }
     private fun openVoiceModelSettings() {

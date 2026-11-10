@@ -763,7 +763,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         abandonSpeechAudioFocus()
         try { recognizer?.reset() } catch (_: Exception) {}
         setListeningCue(true)
-        updateNotification("صدای رایا متوقف شد؛ گوش می‌دهم")
+        updateNotification("Speech interrupted; listening")
     }
 
     private fun sendToChat(message: String) {

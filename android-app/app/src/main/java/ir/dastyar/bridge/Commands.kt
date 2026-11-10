@@ -442,32 +442,39 @@ object Commands {
     }
 
     private fun screen(ctx: Context, args: JSONObject): Pair<Boolean, String> {
-        return when (args.optString("state", args.optString("action", "status")).lowercase(Locale.US)) {
-            "on", "wake" -> {
+        val requested = args.optString("state", args.optString("action", args.optString("mode", "status")))
+            .trim().lowercase(Locale.US).replace('-', '_').replace(' ', '_')
+        return when (requested) {
+            "on", "wake", "wake_up", "screen_on", "turn_on", "display_on" -> {
                 val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
                 val lock = pm.newWakeLock(
                     PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE,
                     "Dastyar:WakeScreen"
                 )
                 try {
-                    lock.acquire(3_000L)
+                    lock.acquire(5_000L)
                     SystemClock.sleep(350L)
-                    if (pm.isInteractive) Pair(true, "صفحه گوشی روشن شد")
-                    else Pair(false, "درخواست روشن‌کردن صفحه ارسال شد، اما اندروید روشن‌شدن نمایشگر را تأیید نکرد")
+                    if (pm.isInteractive) Pair(true, "\u0635\u0641\u062d\u0647 \u06af\u0648\u0634\u06cc \u0631\u0648\u0634\u0646 \u0634\u062f")
+                    else Pair(false, "\u0627\u0646\u062f\u0631\u0648\u06cc\u062f \u0631\u0648\u0634\u0646 \u0634\u062f\u0646 \u0646\u0645\u0627\u06cc\u0634\u06af\u0631 \u0631\u0627 \u062a\u0623\u06cc\u06cc\u062f \u0646\u06a9\u0631\u062f")
                 } catch (e: Exception) {
-                    Pair(false, "روشن‌کردن صفحه ناموفق بود: ${e.javaClass.simpleName}")
+                    Pair(false, "Screen wake failed: ${e.javaClass.simpleName}")
                 } finally {
                     try { if (lock.isHeld) lock.release() } catch (_: Exception) {}
                 }
             }
-            "off", "lock" -> {
-                if (ScreenControlAccessibilityService.isActive() && ScreenControlAccessibilityService.lockScreen()) Pair(true, "صفحه گوشی قفل شد")
+            "off", "lock", "screen_off", "turn_off", "display_off", "lock_screen" -> {
+                if (ScreenControlAccessibilityService.isActive() && ScreenControlAccessibilityService.lockScreen())
+                    Pair(true, "\u0635\u0641\u062d\u0647 \u06af\u0648\u0634\u06cc \u0642\u0641\u0644 \u0634\u062f")
                 else {
-                    try { ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) { }
-                    Pair(false, "سرویس Dastyar screen control فعال نیست؛ آن را در تنظیمات دسترس‌پذیری اندروید روشن کن")
+                    try { ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) {}
+                    Pair(false, "Enable Dastyar screen control in Android Accessibility settings, then retry screen_off.")
                 }
             }
-            else -> Pair(false, "state must be on or off")
+            "status", "check" -> {
+                val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
+                Pair(true, "interactive=${pm.isInteractive}; accessibility=${ScreenControlAccessibilityService.isActive()}")
+            }
+            else -> Pair(false, "Unsupported screen state '$requested'. Use on, off, or status.")
         }
     }
     private fun smsSend(ctx: Context, args: JSONObject): Pair<Boolean, String> {
