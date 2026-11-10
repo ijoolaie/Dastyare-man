@@ -576,7 +576,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             val memory = RayaMemoryStore(this)
             try {
                 memory.addTurn(voiceHistoryId, "user", message)
-                val previousTurns = if (conversationId == null) memory.recentTurns(7).dropLast(1).joinToString(" | ") { "${it.role}: ${it.content.take(500)}" } else ""
+                val previousTurns = memory.turnsForConversation(voiceHistoryId, 7).dropLast(1).joinToString(" | ") { "${it.role}: ${it.content.take(500)}" }
                 val context = memory.personaContext(message) + if (previousTurns.isBlank()) "" else " Previous voice turns: $previousTurns"
                 val contextualMessage = context + " Current user message: " + message
                 val body = JSONObject().put("conversationId", conversationId ?: JSONObject.NULL)
