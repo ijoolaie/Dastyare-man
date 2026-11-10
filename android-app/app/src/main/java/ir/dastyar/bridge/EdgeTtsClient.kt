@@ -7,7 +7,6 @@ import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString
 import java.io.ByteArrayOutputStream
-import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -25,7 +24,7 @@ import java.util.concurrent.atomic.AtomicReference
 object EdgeTtsClient {
     private const val TRUSTED_CLIENT_TOKEN = "6A5AA1D4EAFF4E9FB37E23D68491D6F4"
     private const val EDGE_VERSION = "155.0.4283.45"
-    private const val GEC_VERSION = "1-$EDGE_VERSION"
+    private const val GEC_VERSION = "2-$EDGE_VERSION"
     private const val OUTPUT_FORMAT = "audio-24khz-48kbitrate-mono-mp3"
     private const val WSS_URL = "wss://api.msedgeservices.com/tts/cognitiveservices/websocket/v1"
 
@@ -63,6 +62,7 @@ object EdgeTtsClient {
                     "(KHTML, like Gecko) Chrome/$EDGE_VERSION Safari/537.36 Edg/$EDGE_VERSION"
             )
             .header("Accept-Language", "fa-IR,fa;q=0.9,en;q=0.8")
+            .header("Cookie", "MUID=${randomHex().uppercase(Locale.ROOT)};")
             .build()
 
         val opened = CountDownLatch(1)
@@ -160,14 +160,8 @@ object EdgeTtsClient {
     }
 
     private fun secMsGec(): String {
-        val windowsEpochOffset = 11644473600.0
-        var ticks = System.currentTimeMillis() / 1000.0 + windowsEpochOffset
-        ticks -= ticks % 300.0
-        ticks *= 10_000_000.0
-        val ticksString = String.format(Locale.ROOT, "%.0f", ticks)
-        val input = (ticksString + TRUSTED_CLIENT_TOKEN).toByteArray(Charsets.UTF_8)
-        val digest = MessageDigest.getInstance("SHA-256").digest(input)
-        return digest.joinToString("") { String.format(Locale.ROOT, "%02X", it) }
+        val windowsFileTime = (System.currentTimeMillis() + 11_644_473_600_000L) * 10_000L
+        return EdgeGec.generateToken(windowsFileTime)
     }
 
     private fun timestamp(): String {
