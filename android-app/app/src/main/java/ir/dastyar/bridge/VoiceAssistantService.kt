@@ -677,50 +677,69 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 val contextualMessage = context + " Current user message: " + message
                 val body = JSONObject().put("conversationId", conversationId ?: JSONObject.NULL)
                     .put("message", contextualMessage).put("attachmentIds", JSONArray())
-                var conn: HttpURLConnection
                 var attempt = 0
                 while (true) {
-                    conn = (URL(Prefs.serverUrl(this) + "/api/chat").openConnection() as HttpURLConnection).apply {
+                    val conn = (URL(Prefs.serverUrl(this) + "/api/chat").openConnection() as HttpURLConnection).apply {
                         requestMethod = "POST"; connectTimeout = 15_000; readTimeout = 120_000; doOutput = true
                         setRequestProperty("Content-Type", "application/json; charset=utf-8")
                         setRequestProperty("Accept", "text/event-stream, application/json")
                     }
-                    conn.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
-                    val status = conn.responseCode
-                    Log.i(TAG, "Chat HTTP status=$status attempt=${attempt + 1}")
-                    if (status in 200..299) break
-                    conn.disconnect()
-                    val retryable = status == 429 || status == 502 || status == 503 || status == 504
-                    if (retryable && attempt < 2) {
-                        attempt++
-                        Thread.sleep(900L * attempt)
-                        continue
-                    }
-                    if (retryable) throw Exception("SERVER_BUSY: The AI server is temporarily busy. Please try again shortly.")
-                    throw Exception("HTTP $status")
-                }
-                conn.inputStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
-                    lines.forEach { line ->
-                        val payload = line.trim().removePrefix("data:").trim()
-                        if (payload.isBlank() || payload == "[DONE]") return@forEach
-                        val ev = try { JSONObject(payload) } catch (_: Exception) { null }
-                        if (ev != null) when (ev.optString("type")) {
-                            "status" -> ev.optString("conversationId").takeIf { it.isNotBlank() }?.let {
-                                conversationId = it; memory.setProfile("voice_server_conversation_id", it)
+                    try {
+                        conn.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
+                        val status = conn.responseCode
+                        Log.i(TAG, "Chat HTTP status=" + status + " attempt=" + (attempt + 1))
+                        if (status !in 200..299) {
+                            val retryable = status == 429 || status == 502 || status == 503 || status == 504
+                            if (retryable && attempt < 2) {
+                                attempt++
+                                Thread.sleep(900L * attempt)
+                                continue
                             }
-                            "delta" -> answer += ev.optString("text")
-                            "tool" -> ev.optJSONObject("event")?.let { tool ->
-                                Log.i(TAG, "Chat tool event tool=${tool.optString("tool")} ok=${tool.optBoolean("ok")} durationMs=${tool.optLong("durationMs")}")
-                            }
-                            "done" -> {
-                                ev.optString("conversationId").takeIf { it.isNotBlank() }?.let {
-                                    conversationId = it; memory.setProfile("voice_server_conversation_id", it)
-                                }
-                                ev.optJSONObject("assistantMessage")?.optString("content")?.takeIf { it.isNotBlank() }?.let { answer = it }
-                            }
-                            "error" -> throw Exception(ev.optString("message", "پاسخی دریافت نشد"))
+                            if (retryable) throw Exception("SERVER_BUSY: The AI server is temporarily busy. Please try again shortly.")
+                            throw Exception("HTTP " + status)
                         }
-                    }
+
+                        var streamError: String? = null
+                        conn.inputStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
+                            lines.forEach { line ->
+                                val payload = line.trim().removePrefix("data:").trim()
+                                if (payload.isBlank() || payload == "[DONE]") return@forEach
+                                val ev = try { JSONObject(payload) } catch (_: Exception) { null }
+                                if (ev != null) when (ev.optString("type")) {
+                                    "status" -> ev.optString("conversationId").takeIf { it.isNotBlank() }?.let {
+                                        conversationId = it; memory.setProfile("voice_server_conversation_id", it)
+                                    }
+                                    "delta" -> answer += ev.optString("text")
+                                    "tool" -> ev.optJSONObject("event")?.let { tool ->
+                                        Log.i(TAG, "Chat tool event tool=" + tool.optString("tool") + " ok=" + tool.optBoolean("ok") + " durationMs=" + tool.optLong("durationMs"))
+                                    }
+                                    "done" -> {
+                                        ev.optString("conversationId").takeIf { it.isNotBlank() }?.let {
+                                            conversationId = it; memory.setProfile("voice_server_conversation_id", it)
+                                        }
+                                        ev.optJSONObject("assistantMessage")?.optString("content")?.takeIf { it.isNotBlank() }?.let { answer = it }
+                                    }
+                                    "error" -> streamError = ev.optString("message", "The AI server returned an error")
+                                }
+                            }
+                        }
+
+                        if (!streamError.isNullOrBlank()) {
+                            val errorText = streamError.lowercase()
+                            val providerBusy = streamError.contains("\u0634\u0644\u0648\u063A") || errorText.contains("busy") ||
+                                errorText.contains("overload") || errorText.contains("rate limit") ||
+                                errorText.contains("temporarily unavailable") || errorText.contains("try again")
+                            if (providerBusy && attempt < 2) {
+                                attempt++
+                                Log.w(TAG, "Chat provider busy event; retry attempt=" + (attempt + 1))
+                                Thread.sleep(900L * attempt)
+                                answer = ""
+                                continue
+                            }
+                            throw Exception(streamError)
+                        }
+                        break
+                    } finally { conn.disconnect() }
                 }
                 if (answer.isBlank()) throw Exception("پاسخ متنی از سرور دریافت نشد")
                 memory.addTurn(voiceHistoryId, "assistant", answer)
