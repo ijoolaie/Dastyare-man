@@ -22,6 +22,7 @@ import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
+import android.os.PowerManager
 import android.os.StatFs
 import android.os.SystemClock
 import android.util.Log
@@ -64,6 +65,7 @@ object Commands {
             val result = when (action) {
                 "sysinfo" -> sysinfo(ctx)
                 "device_status" -> deviceStatus(ctx)
+                "screen" -> screen(ctx, args)
                 "brightness" -> brightness(ctx, args)
                 "ringer" -> ringer(ctx, args)
                 "battery" -> battery(ctx)
@@ -419,23 +421,72 @@ object Commands {
 
     // ── پیامک ────────────────────────────────────────────────────
 
-    @SuppressLint("MissingPermission")
+    private fun resolveContactNumber(ctx: Context, name: String): String? {
+        if (name.isBlank()) return null
+        if (!has(ctx, Manifest.permission.READ_CONTACTS)) {
+            requestPermission(ctx, Manifest.permission.READ_CONTACTS)
+            return null
+        }
+        val projection = arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER)
+        ctx.contentResolver.query(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            projection,
+            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
+            arrayOf("%$name%"),
+            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC"
+        )?.use { c -> if (c.moveToFirst()) return c.getString(0)?.trim()?.takeIf { it.isNotEmpty() } }
+        return null
+    }
+
+    private fun screen(ctx: Context, args: JSONObject): Pair<Boolean, String> {
+        return when (args.optString("state", args.optString("action", "status")).lowercase(Locale.US)) {
+            "on", "wake" -> {
+                val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
+                val lock = pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE, "Dastyar:WakeScreen")
+                lock.acquire(5_000L)
+                Pair(true, "Screen wake requested")
+            }
+            "off", "lock" -> {
+                if (ScreenControlAccessibilityService.lockScreen()) Pair(true, "Screen locked")
+                else {
+                    try { ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) { }
+                    Pair(false, "Enable Dastyar screen control in Android Accessibility settings, then repeat the command")
+                }
+            }
+            else -> Pair(false, "state must be on or off")
+        }
+    }
+
     private fun smsSend(ctx: Context, args: JSONObject): Pair<Boolean, String> {
-        // Direct-install build: user reviews and sends through the SMS composer.
-        val to = args.optString("to", "").trim()
-        val text = args.optString("text", "").trim()
-        if (to.isEmpty() || text.isEmpty()) return Pair(false, "پارامترهای to و text الزامی است")
+        var to = args.optString("to", "").trim()
+        val contactName = args.optString("contact_name", args.optString("name", "")).trim()
+        if (to.isEmpty() && contactName.isNotEmpty()) {
+            to = resolveContactNumber(ctx, contactName) ?: return Pair(false, "No phone number found for '$contactName'; grant Contacts permission and retry")
+        }
+        val text = args.optString("text", args.optString("message", "")).trim()
+        if (to.isEmpty() || text.isEmpty()) return Pair(false, "to or contact_name and text are required")
+        if (args.optBoolean("confirm", false)) {
+            if (!has(ctx, Manifest.permission.SEND_SMS)) {
+                requestPermission(ctx, Manifest.permission.SEND_SMS)
+                return Pair(false, "Grant SMS permission in Dastyar, then repeat this explicitly confirmed send command")
+            }
+            return try {
+                SmsManager.getDefault().sendTextMessage(to, null, text, null, null)
+                Pair(true, "SMS submitted to Android SMS service for $to")
+            } catch (e: Exception) {
+                Pair(false, "SMS send failed: ${e.message ?: e.javaClass.simpleName}")
+            }
+        }
         return try {
             val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${Uri.encode(to)}"))
                 .putExtra("sms_body", text)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ctx.startActivity(intent)
-            Pair(true, "برنامه پیامک با شماره و متن آماده باز شد؛ ارسال نهایی را خودت تأیید کن")
+            Pair(true, "SMS composer opened for $to. Review and tap Send to send the message.")
         } catch (e: Exception) {
-            Pair(false, "برنامه پیامک در دسترس نیست: ${e.message ?: "خطای نامشخص"}")
+            Pair(false, "Unable to open SMS composer: ${e.message ?: e.javaClass.simpleName}")
         }
     }
-
     @SuppressLint("MissingPermission")
     private fun smsRead(ctx: Context, args: JSONObject): Pair<Boolean, String> {
         return Pair(false, "خواندن صندوق پیامک موقتاً در نسخه نصب مستقیم غیرفعال است؛ قابلیت برای بازگردانی حفظ شده است")
@@ -501,14 +552,23 @@ object Commands {
     // ── تماس ─────────────────────────────────────────────────────
 
     private fun call(ctx: Context, args: JSONObject): Pair<Boolean, String> {
-        val number = args.optString("target", args.optString("to", "")).trim()
-        if (number.isEmpty()) return Pair(false, "شماره تلفن لازم است (پارامتر target)")
-        return if (has(ctx, Manifest.permission.CALL_PHONE)) {
-            ctx.startActivity(Intent(Intent.ACTION_CALL, Uri.parse("tel:$number")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            Pair(true, "تماس با $number برقرار شد")
-        } else {
-            ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            Pair(true, "مجوز تماس خودکار داده نشده — صفحه تماس با $number باز شد تا خودت دکمه سبز را بزنی")
+        var number = args.optString("target", args.optString("to", "")).trim()
+        val contactName = args.optString("contact_name", args.optString("name", "")).trim()
+        if (number.isEmpty() && contactName.isNotEmpty()) {
+            number = resolveContactNumber(ctx, contactName) ?: return Pair(false, "No phone number found for '$contactName'. Grant Contacts permission or search contacts first.")
+        }
+        if (number.isEmpty()) return Pair(false, "Provide target number or contact_name")
+        return try {
+            if (args.optBoolean("confirm", false) && has(ctx, Manifest.permission.CALL_PHONE)) {
+                ctx.startActivity(Intent(Intent.ACTION_CALL, Uri.parse("tel:${Uri.encode(number)}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                Pair(true, "Call started for $number")
+            } else {
+                if (args.optBoolean("confirm", false) && !has(ctx, Manifest.permission.CALL_PHONE)) requestPermission(ctx, Manifest.permission.CALL_PHONE)
+                ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${Uri.encode(number)}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                Pair(true, "Dialer opened for $number. Review and press Call; grant Phone permission for confirmed direct calls.")
+            }
+        } catch (e: Exception) {
+            Pair(false, "Unable to open dialer: ${e.message ?: e.javaClass.simpleName}")
         }
     }
 }

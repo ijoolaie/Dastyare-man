@@ -24,3 +24,5 @@
 4. کاربر عملکرد دوباره فعال‌شده را تأیید کرده باشد.
 
 **هشدار برای توسعه‌های بعدی:** فایل NotificationListener.kt، منطق smsRead و تاریخچه smsSend را حذف نکن. این قابلیت‌ها تا زمان بازگردانی باید حفظ شوند.
+
+> Update for the current bridge build: `sms_send` is now available. It opens the SMS composer by default. Direct send is supported only with `confirm: true` and after the user grants Android's SEND_SMS permission. `sms_read` remains disabled. See `README.md` for the `screen`, `contacts`, `call`, and `sms_send` command arguments.

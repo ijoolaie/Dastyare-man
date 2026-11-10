@@ -106,3 +106,14 @@ android-app/
 
 ## دستیار صوتی
 جزئیات راه‌اندازی، مجوز میکروفون، محدودیت‌های تشخیص گفتار و حریم خصوصی در [VOICE-ASSISTANT.md](VOICE-ASSISTANT.md) آمده است.
+
+## Native device controls added in PR #8
+
+The bridge now advertises `screen` in its device capabilities.
+
+- `screen` with `{ "state": "on" }` wakes the display. `{ "state": "off" }` locks it. Locking requires the user to enable **Dastyar screen control** in Android Accessibility settings; the service does not retrieve screen content.
+- `contacts` with `{ "query": "Ali", "limit": 10 }` searches names and phone numbers. Android Contacts permission is requested through the app when needed.
+- `call` accepts `{ "contact_name": "Ali", "confirm": true }` or `{ "target": "+...", "confirm": true }`. Confirmed calls use the phone permission; otherwise the dialer opens for manual confirmation.
+- `sms_send` accepts `{ "contact_name": "Ali", "text": "...", "confirm": true }` or `{ "to": "+...", "text": "...", "confirm": true }`. Direct sending requires the user to grant Android SMS permission. Without `confirm: true`, the SMS composer opens and the user taps Send.
+
+The app never silently sends a message or places a call without the explicit `confirm` flag in the device command. Android permission prompts remain user-controlled.
