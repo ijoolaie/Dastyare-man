@@ -7,6 +7,7 @@ import android.database.sqlite.SQLiteOpenHelper
 
 class RayaMemoryStore(context: Context) : SQLiteOpenHelper(context, "raya_memory.db", null, 1) {
     data class Turn(val role: String, val content: String, val createdAt: Long)
+    data class Conversation(val id: String, val preview: String, val updatedAt: Long, val turnCount: Int)
 
     override fun onCreate(db: SQLiteDatabase) {
         db.execSQL("CREATE TABLE profile (key TEXT PRIMARY KEY, value TEXT NOT NULL)")
@@ -65,6 +66,32 @@ class RayaMemoryStore(context: Context) : SQLiteOpenHelper(context, "raya_memory
     }
 
     fun history(limit: Int = 80): List<Turn> = recentTurns(limit)
+
+    fun conversations(limit: Int = 50): List<Conversation> {
+        val result = mutableListOf<Conversation>()
+        readableDatabase.rawQuery(
+            "SELECT COALESCE(conversation_id, 'legacy') AS cid, " +
+                "COALESCE((SELECT content FROM turns t2 WHERE COALESCE(t2.conversation_id, 'legacy') = COALESCE(turns.conversation_id, 'legacy') AND t2.role='user' ORDER BY t2.id ASC LIMIT 1), '') AS preview, " +
+                "MAX(created_at), COUNT(*) FROM turns GROUP BY cid ORDER BY MAX(created_at) DESC LIMIT ?",
+            arrayOf(limit.toString())
+        ).use { c ->
+            while (c.moveToNext()) result.add(Conversation(c.getString(0), c.getString(1), c.getLong(2), c.getInt(3)))
+        }
+        return result
+    }
+
+    fun turnsForConversation(conversationId: String, limit: Int = 200): List<Turn> {
+        val result = mutableListOf<Turn>()
+        val sql = if (conversationId == "legacy")
+            "SELECT role,content,created_at FROM turns WHERE conversation_id IS NULL ORDER BY id DESC LIMIT ?"
+        else
+            "SELECT role,content,created_at FROM turns WHERE conversation_id=? ORDER BY id DESC LIMIT ?"
+        val args = if (conversationId == "legacy") arrayOf(limit.toString()) else arrayOf(conversationId, limit.toString())
+        readableDatabase.rawQuery(sql, args).use { c ->
+            while (c.moveToNext()) result.add(Turn(c.getString(0), c.getString(1), c.getLong(2)))
+        }
+        return result.asReversed()
+    }
 
     fun clearHistory() { writableDatabase.delete("turns", null, null) }
 }

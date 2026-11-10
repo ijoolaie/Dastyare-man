@@ -273,8 +273,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         for (match in tokens.findAll(text)) {
             val token = match.value
             if (token == target || token == target + "\u0647") return match.range
-            // Persian ASR occasionally adds/drops one character around short names.
-            if (token.length in 4..5 && editDistanceAtMostOne(token, target)) return match.range
+            // ASR can attach a short clitic or one extra character to the wake word.
+            if (token.length in 4..6 && editDistanceAtMostOne(token, target)) return match.range
         }
         return null
     }
@@ -299,6 +299,9 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         val wake = wakeWordMatch(text)
         Log.d(TAG, "Speech segment chars=${text.length}; wakeDetected=${wake != null}; activeSession=${SystemClock.elapsedRealtime() < activeUntil}")
         if (wake != null) {
+            // Each explicit wake starts a distinct local history conversation.
+            voiceHistoryId = UUID.randomUUID().toString()
+            RayaMemoryStore(this).setProfile("voice_local_history_id", voiceHistoryId)
             activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
             val command = text.substring(wake.last + 1).trim()
             if (command.isBlank()) speak("بله؟ بگو چه کاری انجام بدهم.") else sendToChat(command)
@@ -376,6 +379,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             } catch (e: Exception) {
                 Log.e(TAG, "Chat request failed: ${e.javaClass.simpleName}")
                 failure = e.message ?: "ارتباط با سرور ناموفق بود"
+                memory.addTurn(voiceHistoryId, "assistant", "Error: ${e.javaClass.simpleName}")
             }
             handler.post {
                 busy = false
