@@ -724,9 +724,10 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                             }
                         }
 
-                        if (!streamError.isNullOrBlank()) {
-                            val errorText = streamError.lowercase()
-                            val providerBusy = streamError.contains("\u0634\u0644\u0648\u063A") || errorText.contains("busy") ||
+                        val serverError = streamError
+                        if (!serverError.isNullOrBlank()) {
+                            val errorText = serverError.lowercase()
+                            val providerBusy = serverError.contains("\u0634\u0644\u0648\u063A") || errorText.contains("busy") ||
                                 errorText.contains("overload") || errorText.contains("rate limit") ||
                                 errorText.contains("temporarily unavailable") || errorText.contains("try again")
                             if (providerBusy && attempt < 2) {
@@ -736,7 +737,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                                 answer = ""
                                 continue
                             }
-                            throw Exception(streamError)
+                            throw Exception(serverError)
                         }
                         break
                     } finally { conn.disconnect() }
