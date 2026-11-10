@@ -38,12 +38,25 @@ class RayaMemoryStore(context: Context) : SQLiteOpenHelper(context, "raya_memory
         }, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
-    fun personaContext(): String = buildString {
-        append("اطلاعات هویتی و حافظه پایدار دستیار را رعایت کن. ")
-        append("نام تو: ").append(getProfile("assistant_name", "رایا")).append(". ")
-        append("نام برنامه: ").append(getProfile("app_name", "دستیار من")).append(". ")
-        append("سازنده برنامه: ").append(getProfile("creator", "نامشخص")).append(". ")
-        append("هدف برنامه: ").append(getProfile("purpose", "دستیار شخصی")).append(". ")
+    fun personaContext(userMessage: String): String = buildString {
+        append("در مکالمه عادی هرگز خودت را معرفی نکن، نام یا سازنده یا هدف برنامه را داوطلبانه تکرار نکن و مستقیم به درخواست کاربر پاسخ بده. ")
+        append("فقط اگر کاربر صریحاً درباره هویت، نام، سازنده یا خود برنامه پرسید، اطلاعات هویتی را بیان کن. ")
+        append("اگر کاربر فقط کلمه بیدارباش را گفت، پاسخ دقیق تو باید این باشد: «بله، چه کاری می‌توانم انجام دهم؟» ")
+        append("دستگاه Android متصل از این فرمان‌ها پشتیبانی می‌کند: ").append(BridgeService.CAPS.joinToString(", ")).append(". ")
+        append("اگر درخواست کاربر در این فهرست است، از مسیر اجرای فرمان دستگاه متصل استفاده کن؛ صرفاً به‌دلیل اجرا در WebView یا Chrome نگو نمی‌توانم. فقط نتیجه واقعی ابزار را گزارش کن. ")
+        append("For phone commands, call list_devices first. The physical Samsung Galaxy S8 is device id s8 (Android 9). Always execute phone actions using device_command with device id s8. Chrome (Android) is a separate browser session, never the physical phone. Never claim the phone is connected through Chrome. If s8 is missing/offline or its command fails, report that the native Android Bridge is unavailable; never fall back to Chrome or attribute Chrome status to the phone. ")
+        append("For browser tasks, do not refuse or claim a task is impossible only because the user agent contains Chrome or identifies this app as Android WebView. This app uses Chromium-based Android WebView with an Edge compatibility token; it is not the full Microsoft Edge browser. First attempt the available browser or app tools and verify the actual result. Only report a limitation when a required capability is genuinely unavailable or an operation actually fails; name that specific limitation and offer a workable alternative. Never invent a browser restriction. ")
+        append("خواندن SMS و اعلان‌های سایر برنامه‌ها فعلاً غیرفعال است؛ ارسال SMS صفحه پیامک را برای تأیید نهایی کاربر باز می‌کند. ")
+        val asksIdentity = Regex(
+            "(اسم تو|نام تو|تو کی هستی|خودت رو معرفی|خودت را معرفی|سازنده|خالق|چه کسی ساخت|اسم برنامه|نام برنامه|درباره خودت|who are you|your name|who made you|creator)",
+            RegexOption.IGNORE_CASE
+        ).containsMatchIn(userMessage)
+        if (asksIdentity) {
+            append("اطلاعات هویتی در صورت درخواست صریح: نام دستیار: ").append(getProfile("assistant_name", "رایا")).append(". ")
+            append("نام برنامه: ").append(getProfile("app_name", "دستیار من")).append(". ")
+            append("سازنده برنامه: ").append(getProfile("creator", "نامشخص")).append(". ")
+            append("هدف برنامه: ").append(getProfile("purpose", "دستیار شخصی")).append(". ")
+        }
         append("اصول رفتاری: ").append(getProfile("principles", "صداقت و حفظ حریم خصوصی")).append(". ")
         val notes = getProfile("memory_notes")
         if (notes.isNotBlank()) append("حافظه تکمیلی: ").append(notes).append(".")

@@ -3,7 +3,7 @@
 این اپ، گوشی اندروید تو را به «دستیار من» وصل می‌کند تا هوش مصنوعی بتواند
 گوشیت را مدیریت کند: مخاطبین، تماس، اپ‌ها، موزیک، صدای گوشی، چراغ‌قوه، ویبره، اعلان، موقعیت مکانی و اطلاعات سیستم.
 
-> **محدودیت موقت نسخه نصب مستقیم:** خواندن صندوق پیامک و خواندن اعلان‌های سایر برنامه‌ها موقتاً غیرفعال شده‌اند. ارسال پیامک از طریق بازکردن برنامه پیامک با متن آماده و تأیید نهایی کاربر انجام می‌شود. این قابلیت‌ها حذف دائمی نشده‌اند؛ فهرست بازگردانی در فایل `TEMPORARILY-DISABLED-FEATURES.md` ثبت شده است.
+> **محدودیت نسخه نصب مستقیم:** خواندن صندوق پیامک غیرفعال است. خواندن اعلان‌های برنامه‌های دیگر با فعال‌کردن دستی دسترسی Notification access در تنظیمات اندروید قابل استفاده است. ارسال پیامک با بازکردن برنامه پیامک و تأیید نهایی کاربر انجام می‌شود.
 
 - بدون root — فقط مجوزهای استاندارد اندروید
 - Foreground Service — همیشه در پس‌زمینه زنده می‌ماند
@@ -53,22 +53,23 @@
 اگر اپ در پس‌زمینه باشد، درخواست ثبت می‌شود و هنگام بازکردن اپ نمایش داده خواهد شد.
 پس از تأیید مجوز، دستور را دوباره اجرا کن. ردکردن مجوز مانع استفاده از سایر قابلیت‌های برنامه نمی‌شود.
 
-تنظیمات بهینه‌سازی باتری از منوی ⚙️ اپ قابل دسترسی است. دسترسی خواندن اعلان‌ها در نسخه نصب مستقیم موقتاً غیرفعال است.
+تنظیمات بهینه‌سازی باتری از منوی ⚙️ اپ قابل دسترسی است. برای خواندن اعلان‌های سایر برنامه‌ها، دسترسی Notification access را از منوی تنظیمات اپ فعال کن.
 
 ## عملیات‌های پشتیبانی‌شده
 
 | عملیات | توضیح |
 | --- | --- |
-| `sysinfo` / `battery` | مدل گوشی، اندروید، رم، حافظه، باتری |
+| `sysinfo` / `device_status` / `battery` | مشخصات، وضعیت شبکه، زنگ، روشنایی، باتری، رم و حافظه |
 | `notify` | نمایش اعلان روی گوشی |
 | `vibrate` | ویبره با مدت مشخص |
 | `open_url` / `open_app` / `apps` | باز کردن لینک/اپ، فهرست اپ‌ها |
-| `notifications` | موقتاً غیرفعال در نسخه نصب مستقیم؛ برای بازگردانی حفظ شده است |
-| `media` / `volume` | پخش/مکث/بعدی + تنظیم صدا |
+| `notifications` | خواندن اعلان‌های اخیر پس از فعال‌سازی دستی Notification access |
+| `media` / `volume` / `ringer` | کنترل پخش، صدا و حالت زنگ (عادی/لرزش/بی‌صدا) |
+| `brightness` | خواندن و تنظیم روشنایی صفحه؛ برای تغییر، مجوز Modify system settings لازم است |
 | `flashlight` | روشن/خاموش چراغ‌قوه |
 | `geolocation` | آخرین موقعیت GPS |
 | `sms_send` | بازکردن برنامه پیامک با شماره و متن آماده؛ ارسال با تأیید کاربر |
-| `sms_read` | موقتاً غیرفعال در نسخه نصب مستقیم؛ برای بازگردانی ثبت شده است |
+| `sms_read` | غیرفعال در نسخه نصب مستقیم |
 | `contacts` / `call` | مخاطبین و تماس (نیازمند تأیید کاربر در چت) |
 
 ## نکته‌ها
@@ -94,7 +95,7 @@ android-app/
         ├── AndroidManifest.xml
         ├── java/ir/dastyar/bridge/
         │   ├── MainActivity.kt        # جفت‌سازی + WebView
-        │   ├── BridgeService.kt       # سرویس همیشه‌فعال (register/poll/result)
+        │   ├── BridgeService.kt       # سرویس اتصال پس‌زمینه، retry و وضعیت اتصال
         │   ├── Commands.kt            # ۱۸ عملیات اندروید
         │   ├── NotificationListener.kt# خواندن نوتیفیکیشن‌ها
         │   ├── BootReceiver.kt        # شروع خودکار بعد از بوت
@@ -105,3 +106,14 @@ android-app/
 
 ## دستیار صوتی
 جزئیات راه‌اندازی، مجوز میکروفون، محدودیت‌های تشخیص گفتار و حریم خصوصی در [VOICE-ASSISTANT.md](VOICE-ASSISTANT.md) آمده است.
+
+## Native device controls added in PR #8
+
+The bridge now advertises `screen` in its device capabilities.
+
+- `screen` with `{ "state": "on" }` wakes the display. `{ "state": "off" }` locks it. Locking requires the user to enable **Dastyar screen control** in Android Accessibility settings; the service does not retrieve screen content.
+- `contacts` with `{ "query": "Ali", "limit": 10 }` searches names and phone numbers. Android Contacts permission is requested through the app when needed.
+- `call` accepts `{ "contact_name": "Ali", "confirm": true }` or `{ "target": "+...", "confirm": true }`. Confirmed calls use the phone permission; otherwise the dialer opens for manual confirmation.
+- `sms_send` accepts `{ "contact_name": "Ali", "text": "...", "confirm": true }` or `{ "to": "+...", "text": "...", "confirm": true }`. Direct sending requires the user to grant Android SMS permission. Without `confirm: true`, the SMS composer opens and the user taps Send.
+
+The app never silently sends a message or places a call without the explicit `confirm` flag in the device command. Android permission prompts remain user-controlled.

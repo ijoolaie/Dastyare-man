@@ -16,15 +16,20 @@ import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraManager
 import android.location.LocationManager
 import android.media.AudioManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
+import android.os.PowerManager
 import android.os.StatFs
 import android.os.SystemClock
+import android.util.Log
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.provider.ContactsContract
+import android.provider.Settings
 import android.provider.Telephony
 import android.telephony.SmsManager
 import android.view.KeyEvent
@@ -39,6 +44,7 @@ import java.util.Locale
  * همه عملیات‌ها بدون root و فقط با مجوزهای استاندارد اندروید.
  */
 object Commands {
+    private const val TAG = "RayaCommands"
 
     fun has(ctx: Context, perm: String): Boolean =
         ContextCompat.checkSelfPermission(ctx, perm) == PackageManager.PERMISSION_GRANTED
@@ -54,9 +60,14 @@ object Commands {
     }
 
     fun execute(ctx: Context, action: String, args: JSONObject): Pair<Boolean, String> {
+        Log.i(TAG, "Executing action=$action")
         return try {
-            when (action) {
+            val result = when (action) {
                 "sysinfo" -> sysinfo(ctx)
+                "device_status" -> deviceStatus(ctx)
+                "screen" -> screen(ctx, args)
+                "brightness" -> brightness(ctx, args)
+                "ringer" -> ringer(ctx, args)
                 "battery" -> battery(ctx)
                 "vibrate" -> vibrate(ctx, args)
                 "notify" -> notifyPhone(ctx, args)
@@ -76,11 +87,13 @@ object Commands {
                 "call" -> call(ctx, args)
                 else -> Pair(false, "عملیات ناشناخته: $action")
             }
+            Log.i(TAG, "Action=$action ok=${result.first} resultChars=${result.second.length}")
+            result
         } catch (e: Exception) {
+            Log.e(TAG, "Action=$action failed: ${e.javaClass.simpleName}: ${e.message}")
             Pair(false, "خطا: ${e.message ?: e.javaClass.simpleName}")
         }
     }
-
     // ── باتری ────────────────────────────────────────────────────
 
     private fun batteryInfo(ctx: Context): Pair<Int, Boolean> {
@@ -119,6 +132,85 @@ object Commands {
         return Pair(true, info.joinToString("\n"))
     }
 
+
+    private fun deviceStatus(ctx: Context): Pair<Boolean, String> {
+        val (pct, charging) = batteryInfo(ctx)
+        val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+        val ringer = when (audio?.ringerMode) {
+            AudioManager.RINGER_MODE_SILENT -> "silent"
+            AudioManager.RINGER_MODE_VIBRATE -> "vibrate"
+            AudioManager.RINGER_MODE_NORMAL -> "normal"
+            else -> "unknown"
+        }
+        val brightness = try {
+            Settings.System.getInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
+                .let { (it * 100 / 255).coerceIn(0, 100) }
+        } catch (_: Exception) { -1 }
+        val cm = ctx.getSystemService(ConnectivityManager::class.java)
+        val network = cm?.activeNetwork
+        val caps = if (cm != null && network != null) cm.getNetworkCapabilities(network) else null
+        val connection = when {
+            caps == null -> "offline"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) -> "Wi-Fi"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> "mobile data"
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> "Ethernet"
+            else -> "connected"
+        }
+        val (level, isCharging) = batteryInfo(ctx)
+        return Pair(true, "Device: ${Build.MANUFACTURER} ${Build.MODEL}; Android ${Build.VERSION.RELEASE}; battery $level%${if (isCharging) " (charging)" else ""}; network $connection; ringer $ringer; brightness ${if (brightness >= 0) "$brightness%" else "unavailable"}")
+    }
+
+    private fun brightness(ctx: Context, args: JSONObject): Pair<Boolean, String> {
+        val current = try {
+            Settings.System.getInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS)
+                .let { (it * 100 / 255).coerceIn(0, 100) }
+        } catch (_: Exception) { -1 }
+        if (!args.has("level")) {
+            return if (current >= 0) Pair(true, "Screen brightness is $current%")
+            else Pair(false, "Screen brightness is unavailable")
+        }
+        val level = args.optInt("level", -1)
+        if (level !in 0..100) return Pair(false, "level must be between 0 and 100")
+        if (!Settings.System.canWrite(ctx)) {
+            return try {
+                val intent = Intent(Settings.ACTION_MANAGE_WRITE_SETTINGS, Uri.parse("package:${ctx.packageName}"))
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                ctx.startActivity(intent)
+                Pair(false, "Allow Dastyar to modify system settings, then repeat the brightness command")
+            } catch (_: Exception) {
+                Pair(false, "Enable Modify system settings for Dastyar in Android Settings")
+            }
+        }
+        Settings.System.putInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL)
+        Settings.System.putInt(ctx.contentResolver, Settings.System.SCREEN_BRIGHTNESS, (level * 255 / 100).coerceIn(0, 255))
+        return Pair(true, "Screen brightness set to $level%")
+    }
+
+    private fun ringer(ctx: Context, args: JSONObject): Pair<Boolean, String> {
+        val audio = ctx.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            ?: return Pair(false, "Audio service is unavailable")
+        val requested = args.optString("mode", "status").lowercase(Locale.US)
+        val mode = when (requested) {
+            "status", "" -> return Pair(true, "Ringer mode: ${when (audio.ringerMode) { AudioManager.RINGER_MODE_SILENT -> "silent"; AudioManager.RINGER_MODE_VIBRATE -> "vibrate"; else -> "normal" }}")
+            "normal", "ring" -> AudioManager.RINGER_MODE_NORMAL
+            "vibrate", "vibration" -> AudioManager.RINGER_MODE_VIBRATE
+            "silent", "mute" -> AudioManager.RINGER_MODE_SILENT
+            else -> return Pair(false, "mode must be status, normal, vibrate or silent")
+        }
+        if (mode == AudioManager.RINGER_MODE_SILENT) {
+            val nm = ctx.getSystemService(NotificationManager::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && nm?.isNotificationPolicyAccessGranted != true) {
+                return try {
+                    ctx.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                    Pair(false, "Allow Dastyar to control Do Not Disturb, then repeat the command")
+                } catch (_: Exception) {
+                    Pair(false, "Enable DND access for Dastyar in Android Settings")
+                }
+            }
+        }
+        audio.ringerMode = mode
+        return Pair(true, "Ringer mode set to $requested")
+    }
     // ── ویبره و اعلان ────────────────────────────────────────────
 
     private fun vibrate(ctx: Context, args: JSONObject): Pair<Boolean, String> {
@@ -235,21 +327,14 @@ object Commands {
     // ── نوتیفیکیشن‌ها ────────────────────────────────────────────
 
     private fun notifications(args: JSONObject): Pair<Boolean, String> {
-        return Pair(false, "خواندن اعلان‌های سایر برنامه‌ها موقتاً در نسخه نصب مستقیم غیرفعال است؛ قابلیت برای بازگردانی حفظ شده است")
-        /* ORIGINAL IMPLEMENTATION:
         if (!NotificationListener.connected) {
-            return Pair(false, "دسترسی خواندن نوتیفیکیشن فعال نیست — در تنظیمات اندروید: Settings › Notification access › دستیار من")
+            return Pair(false, "Notification access is not enabled. Enable Dastyar in Android Settings > Notification access.")
         }
         val limit = args.optInt("limit", 10).coerceIn(1, 30)
         val list = NotificationListener.recent(limit)
-        if (list.isEmpty()) return Pair(true, "فعلاً نوتیفیکیشن جدیدی ثبت نشده")
-        return Pair(
-            true,
-            "${list.size} نوتیفیکیشن اخیر:\n" + list.joinToString("\n") {
-                "• [${it["app"]}] ${it["title"]}${if (!it["text"].isNullOrEmpty()) " — ${it["text"]}" else ""} (${it["time"]})"
-            }
-        )
-        */
+        if (list.isEmpty()) return Pair(true, "No recent notifications are available yet.")
+        val summary = list.joinToString(" | ") { "${it["app"]}: ${it["title"]} ${it["text"]}" }
+        return Pair(true, "${list.size} recent notifications: $summary")
     }
 
     // ── موزیک و صدا ──────────────────────────────────────────────
@@ -336,23 +421,78 @@ object Commands {
 
     // ── پیامک ────────────────────────────────────────────────────
 
-    @SuppressLint("MissingPermission")
-    private fun smsSend(ctx: Context, args: JSONObject): Pair<Boolean, String> {
-        // Direct-install build: user reviews and sends through the SMS composer.
-        val to = args.optString("to", "").trim()
-        val text = args.optString("text", "").trim()
-        if (to.isEmpty() || text.isEmpty()) return Pair(false, "پارامترهای to و text الزامی است")
-        return try {
-            val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${Uri.encode(to)}"))
-                .putExtra("sms_body", text)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            ctx.startActivity(intent)
-            Pair(true, "برنامه پیامک با شماره و متن آماده باز شد؛ ارسال نهایی را خودت تأیید کن")
-        } catch (e: Exception) {
-            Pair(false, "برنامه پیامک در دسترس نیست: ${e.message ?: "خطای نامشخص"}")
+    private fun resolveContactNumber(ctx: Context, name: String): String? {
+        if (name.isBlank()) return null
+        if (!has(ctx, Manifest.permission.READ_CONTACTS)) {
+            requestPermission(ctx, Manifest.permission.READ_CONTACTS)
+            return null
+        }
+        val projection = arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER)
+        val matches = linkedSetOf<String>()
+        ctx.contentResolver.query(
+            ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
+            projection,
+            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
+            arrayOf("%$name%"),
+            "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC"
+        )?.use { c ->
+            while (c.moveToNext()) c.getString(0)?.trim()?.takeIf { it.isNotEmpty() }?.let(matches::add)
+        }
+        return matches.singleOrNull()
+    }
+
+    private fun screen(ctx: Context, args: JSONObject): Pair<Boolean, String> {
+        return when (args.optString("state", args.optString("action", "status")).lowercase(Locale.US)) {
+            "on", "wake" -> {
+                val pm = ctx.getSystemService(Context.POWER_SERVICE) as PowerManager
+                val lock = pm.newWakeLock(PowerManager.SCREEN_BRIGHT_WAKE_LOCK or PowerManager.ACQUIRE_CAUSES_WAKEUP or PowerManager.ON_AFTER_RELEASE, "Dastyar:WakeScreen")
+                lock.acquire(5_000L)
+                Pair(true, "Screen wake requested")
+            }
+            "off", "lock" -> {
+                if (ScreenControlAccessibilityService.lockScreen()) Pair(true, "Screen locked")
+                else {
+                    try { ctx.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) } catch (_: Exception) { }
+                    Pair(false, "Enable Dastyar screen control in Android Accessibility settings, then repeat the command")
+                }
+            }
+            else -> Pair(false, "state must be on or off")
         }
     }
 
+    private fun smsSend(ctx: Context, args: JSONObject): Pair<Boolean, String> {
+        var to = args.optString("to", "").trim()
+        val contactName = args.optString("contact_name", args.optString("name", "")).trim()
+        if (to.isEmpty() && contactName.isNotEmpty()) {
+            to = resolveContactNumber(ctx, contactName) ?: return Pair(false, "No unique phone number found for '$contactName'; grant Contacts permission or search contacts and choose an exact number")
+        }
+        val text = args.optString("text", args.optString("message", "")).trim()
+        if (to.isEmpty() || text.isEmpty()) return Pair(false, "to or contact_name and text are required")
+        if (args.optBoolean("confirm", false)) {
+            if (!has(ctx, Manifest.permission.SEND_SMS)) {
+                requestPermission(ctx, Manifest.permission.SEND_SMS)
+                return Pair(false, "Grant SMS permission in Dastyar, then repeat this explicitly confirmed send command")
+            }
+            return try {
+                val sms = SmsManager.getDefault()
+                val parts = sms.divideMessage(text)
+                if (parts.size > 1) sms.sendMultipartTextMessage(to, null, parts, null, null)
+                else sms.sendTextMessage(to, null, text, null, null)
+                Pair(true, "SMS submitted to Android SMS service for $to")
+            } catch (e: Exception) {
+                Pair(false, "SMS send failed: ${e.message ?: e.javaClass.simpleName}")
+            }
+        }
+        return try {
+            val intent = Intent(Intent.ACTION_SENDTO, Uri.fromParts("smsto", to, null))
+                .putExtra("sms_body", text)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            ctx.startActivity(intent)
+            Pair(true, "SMS composer opened for $to. Review and tap Send to send the message.")
+        } catch (e: Exception) {
+            Pair(false, "Unable to open SMS composer: ${e.message ?: e.javaClass.simpleName}")
+        }
+    }
     @SuppressLint("MissingPermission")
     private fun smsRead(ctx: Context, args: JSONObject): Pair<Boolean, String> {
         return Pair(false, "خواندن صندوق پیامک موقتاً در نسخه نصب مستقیم غیرفعال است؛ قابلیت برای بازگردانی حفظ شده است")
@@ -418,14 +558,23 @@ object Commands {
     // ── تماس ─────────────────────────────────────────────────────
 
     private fun call(ctx: Context, args: JSONObject): Pair<Boolean, String> {
-        val number = args.optString("target", args.optString("to", "")).trim()
-        if (number.isEmpty()) return Pair(false, "شماره تلفن لازم است (پارامتر target)")
-        return if (has(ctx, Manifest.permission.CALL_PHONE)) {
-            ctx.startActivity(Intent(Intent.ACTION_CALL, Uri.parse("tel:$number")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            Pair(true, "تماس با $number برقرار شد")
-        } else {
-            ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$number")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-            Pair(true, "مجوز تماس خودکار داده نشده — صفحه تماس با $number باز شد تا خودت دکمه سبز را بزنی")
+        var number = args.optString("target", args.optString("to", "")).trim()
+        val contactName = args.optString("contact_name", args.optString("name", "")).trim()
+        if (number.isEmpty() && contactName.isNotEmpty()) {
+            number = resolveContactNumber(ctx, contactName) ?: return Pair(false, "No unique phone number found for '$contactName'. Grant Contacts permission or search contacts and choose an exact number.")
+        }
+        if (number.isEmpty()) return Pair(false, "Provide target number or contact_name")
+        return try {
+            if (args.optBoolean("confirm", false) && has(ctx, Manifest.permission.CALL_PHONE)) {
+                ctx.startActivity(Intent(Intent.ACTION_CALL, Uri.fromParts("tel", number, null)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                Pair(true, "Call started for $number")
+            } else {
+                if (args.optBoolean("confirm", false) && !has(ctx, Manifest.permission.CALL_PHONE)) requestPermission(ctx, Manifest.permission.CALL_PHONE)
+                ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                Pair(true, "Dialer opened for $number. Review and press Call; grant Phone permission for confirmed direct calls.")
+            }
+        } catch (e: Exception) {
+            Pair(false, "Unable to open dialer: ${e.message ?: e.javaClass.simpleName}")
         }
     }
 }

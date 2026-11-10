@@ -7,4 +7,5 @@
     <string name="btn_connect">اتصال</string>
     <string name="pair_help">توکن را از اپ وب «دستیار من» بگیر: جعبه‌ابزار › تب دستگاه‌ها › افزودن دستگاه جدید › گزینه «اپ اندروید». بعد از اتصال، در تنظیمات باتری اجازه بده اپ در پس‌زمینه بماند.</string>
     <string name="settings">تنظیمات</string>
+    <string name="screen_control_accessibility_description">Allows Dastyar to lock the screen when you explicitly ask it to. It does not read screen content.</string>
 </resources>
