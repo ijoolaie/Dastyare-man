@@ -428,14 +428,17 @@ object Commands {
             return null
         }
         val projection = arrayOf(ContactsContract.CommonDataKinds.Phone.NUMBER)
+        val matches = linkedSetOf<String>()
         ctx.contentResolver.query(
             ContactsContract.CommonDataKinds.Phone.CONTENT_URI,
             projection,
             "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} LIKE ?",
             arrayOf("%$name%"),
             "${ContactsContract.CommonDataKinds.Phone.DISPLAY_NAME} ASC"
-        )?.use { c -> if (c.moveToFirst()) return c.getString(0)?.trim()?.takeIf { it.isNotEmpty() } }
-        return null
+        )?.use { c ->
+            while (c.moveToNext()) c.getString(0)?.trim()?.takeIf { it.isNotEmpty() }?.let(matches::add)
+        }
+        return matches.singleOrNull()
     }
 
     private fun screen(ctx: Context, args: JSONObject): Pair<Boolean, String> {
@@ -461,7 +464,7 @@ object Commands {
         var to = args.optString("to", "").trim()
         val contactName = args.optString("contact_name", args.optString("name", "")).trim()
         if (to.isEmpty() && contactName.isNotEmpty()) {
-            to = resolveContactNumber(ctx, contactName) ?: return Pair(false, "No phone number found for '$contactName'; grant Contacts permission and retry")
+            to = resolveContactNumber(ctx, contactName) ?: return Pair(false, "No unique phone number found for '$contactName'; grant Contacts permission or search contacts and choose an exact number")
         }
         val text = args.optString("text", args.optString("message", "")).trim()
         if (to.isEmpty() || text.isEmpty()) return Pair(false, "to or contact_name and text are required")
@@ -471,14 +474,17 @@ object Commands {
                 return Pair(false, "Grant SMS permission in Dastyar, then repeat this explicitly confirmed send command")
             }
             return try {
-                SmsManager.getDefault().sendTextMessage(to, null, text, null, null)
+                val sms = SmsManager.getDefault()
+                val parts = sms.divideMessage(text)
+                if (parts.size > 1) sms.sendMultipartTextMessage(to, null, parts, null, null)
+                else sms.sendTextMessage(to, null, text, null, null)
                 Pair(true, "SMS submitted to Android SMS service for $to")
             } catch (e: Exception) {
                 Pair(false, "SMS send failed: ${e.message ?: e.javaClass.simpleName}")
             }
         }
         return try {
-            val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:${Uri.encode(to)}"))
+            val intent = Intent(Intent.ACTION_SENDTO, Uri.fromParts("smsto", to, null))
                 .putExtra("sms_body", text)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             ctx.startActivity(intent)
@@ -555,16 +561,16 @@ object Commands {
         var number = args.optString("target", args.optString("to", "")).trim()
         val contactName = args.optString("contact_name", args.optString("name", "")).trim()
         if (number.isEmpty() && contactName.isNotEmpty()) {
-            number = resolveContactNumber(ctx, contactName) ?: return Pair(false, "No phone number found for '$contactName'. Grant Contacts permission or search contacts first.")
+            number = resolveContactNumber(ctx, contactName) ?: return Pair(false, "No unique phone number found for '$contactName'. Grant Contacts permission or search contacts and choose an exact number.")
         }
         if (number.isEmpty()) return Pair(false, "Provide target number or contact_name")
         return try {
             if (args.optBoolean("confirm", false) && has(ctx, Manifest.permission.CALL_PHONE)) {
-                ctx.startActivity(Intent(Intent.ACTION_CALL, Uri.parse("tel:${Uri.encode(number)}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                ctx.startActivity(Intent(Intent.ACTION_CALL, Uri.fromParts("tel", number, null)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 Pair(true, "Call started for $number")
             } else {
                 if (args.optBoolean("confirm", false) && !has(ctx, Manifest.permission.CALL_PHONE)) requestPermission(ctx, Manifest.permission.CALL_PHONE)
-                ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${Uri.encode(number)}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.fromParts("tel", number, null)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 Pair(true, "Dialer opened for $number. Review and press Call; grant Phone permission for confirmed direct calls.")
             }
         } catch (e: Exception) {
