@@ -33,7 +33,7 @@ class BridgeService : Service() {
         val CAPS = listOf(
             "sysinfo", "battery", "vibrate", "notify", "clipboard_write", "clipboard_read",
             "open_url", "open_app", "apps", "media", "volume", "flashlight",
-            "geolocation", "sms_send", "contacts", "call",
+            "geolocation", "sms_send", "contacts", "call", "notifications",
         )
     }
 

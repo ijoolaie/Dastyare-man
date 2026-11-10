@@ -240,21 +240,14 @@ object Commands {
     // ── نوتیفیکیشن‌ها ────────────────────────────────────────────
 
     private fun notifications(args: JSONObject): Pair<Boolean, String> {
-        return Pair(false, "خواندن اعلان‌های سایر برنامه‌ها موقتاً در نسخه نصب مستقیم غیرفعال است؛ قابلیت برای بازگردانی حفظ شده است")
-        /* ORIGINAL IMPLEMENTATION:
         if (!NotificationListener.connected) {
-            return Pair(false, "دسترسی خواندن نوتیفیکیشن فعال نیست — در تنظیمات اندروید: Settings › Notification access › دستیار من")
+            return Pair(false, "Notification access is not enabled. Enable Dastyar in Android Settings > Notification access.")
         }
         val limit = args.optInt("limit", 10).coerceIn(1, 30)
         val list = NotificationListener.recent(limit)
-        if (list.isEmpty()) return Pair(true, "فعلاً نوتیفیکیشن جدیدی ثبت نشده")
-        return Pair(
-            true,
-            "${list.size} نوتیفیکیشن اخیر:\n" + list.joinToString("\n") {
-                "• [${it["app"]}] ${it["title"]}${if (!it["text"].isNullOrEmpty()) " — ${it["text"]}" else ""} (${it["time"]})"
-            }
-        )
-        */
+        if (list.isEmpty()) return Pair(true, "No recent notifications are available yet.")
+        val summary = list.joinToString(" | ") { "${it["app"]}: ${it["title"]} ${it["text"]}" }
+        return Pair(true, "${list.size} recent notifications: $summary")
     }
 
     // ── موزیک و صدا ──────────────────────────────────────────────
