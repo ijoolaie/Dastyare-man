@@ -2,6 +2,9 @@ package ir.dastyar.bridge
 
 import android.app.*
 import android.media.AudioAttributes
+import android.media.AudioManager
+import android.media.MediaPlayer
+import android.media.ToneGenerator
 import android.media.AudioTrack
 import android.media.AudioFormat
 import android.media.AudioRecord
@@ -32,6 +35,8 @@ import java.util.UUID
 class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     companion object {
         const val ACTION_STOP = "ir.dastyar.bridge.voice.STOP"
+        const val ACTION_TEST_TTS = "ir.dastyar.bridge.voice.TEST_TTS"
+        const val EXTRA_TTS_VOICE = "tts_voice"
         private const val CHANNEL = "raya_voice"
         private const val NOTIFICATION_ID = 43
         private const val SESSION_MS = 45_000L
@@ -48,6 +53,10 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var offlineTts: OfflineTts? = null
     @Volatile private var offlineTtsLoading = false
     private var pendingSpeech: String? = null
+    private var edgePlayer: MediaPlayer? = null
+    private var edgeAudioFile: File? = null
+    private var toneGenerator: ToneGenerator? = null
+    private var listeningCueState: Boolean? = null
     @Volatile private var busy = false
     private var activeUntil = 0L
     // Backend conversation ID and local history ID are deliberately separate.
@@ -92,9 +101,13 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            setListeningCue(false)
             Prefs.setVoiceEnabled(this, false)
             stopSelf()
             return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_TEST_TTS) {
+            speak("سلام، من رایا هستم. این یک نمونه صدای آزمایشی است.", intent.getStringExtra(EXTRA_TTS_VOICE))
         }
         if (speechService == null && offlineRecognizer == null && modelLoader == null && !destroyed) loadModelAsync()
         return START_STICKY
@@ -168,6 +181,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     modelLoader = null
                     if (selected == VoiceModel.VOSK) {
                         speechService?.startListening(voskListener)
+                        setListeningCue(true)
                     } else {
                         startSherpaAudio()
                     }
@@ -185,7 +199,10 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
 
     private fun restartVoskListening() {
         if (destroyed || busy || VoiceModel.fromId(Prefs.voiceModel(this)) != VoiceModel.VOSK) return
-        try { speechService?.startListening(voskListener) } catch (_: Exception) {
+        try {
+            speechService?.startListening(voskListener)
+            setListeningCue(true)
+        } catch (_: Exception) {
             handler.postDelayed({ if (!destroyed && !busy) restartVoskListening() }, 1800)
         }
     }
@@ -206,6 +223,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         audioRecord = recorder
         sherpaRunning = true
+        setListeningCue(true)
         sherpaThread = Thread {
             val buffer = ShortArray(640)
             val utterance = ArrayList<Float>(16_000 * 6)
@@ -349,7 +367,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     if (destroyed) { engine.release(); return@post }
                     offlineTts = engine
                     Log.i(TAG, "Offline Persian TTS ready")
-                    pendingSpeech?.let { pendingSpeech = null; speak(it) }
+                    pendingSpeech?.let { pendingSpeech = null; playOfflineSpeech(it) }
                     updateNotification("صدای فارسی آفلاین آماده است")
                 }
             } catch (e: Exception) {
@@ -367,6 +385,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun playOfflineSpeech(text: String) {
+        setListeningCue(false)
         val clean = text.replace(Regex("https?://\\S+"), " ")
             .replace(Regex("[#*_>|]"), " ").replace(Regex("\\s+"), " ").trim().take(3500)
         if (clean.isBlank()) { resumeListening(); return }
@@ -414,27 +433,135 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }.apply { name = "raya-persian-tts-playback"; start() }
     }
 
-    private fun speak(text: String) {
+    private fun speak(text: String, voiceOverride: String? = null) {
         if (text.isBlank()) { resumeListening(); return }
-        if (ttsReady) {
+        val clean = text.replace(Regex("https?://\\S+"), " ")
+            .replace(Regex("[#*_>|]"), " ").replace(Regex("\\s+"), " ").trim().take(3500)
+        if (clean.isBlank()) { resumeListening(); return }
+        setListeningCue(false)
+        when (TtsVoice.fromId(voiceOverride ?: Prefs.ttsVoice(this))) {
+            TtsVoice.EDGE_FARID, TtsVoice.EDGE_DILARA -> {
+                playEdgeSpeech(clean, voiceOverride ?: Prefs.ttsVoice(this))
+                return
+            }
+            TtsVoice.PIPER -> {
+                if (offlineTts != null) playOfflineSpeech(clean)
+                else {
+                    busy = true
+                    speechService?.setPause(true)
+                    if (offlineRecognizer != null) stopSherpaAudio()
+                    pendingSpeech = clean
+                    updateNotification("در حال آماده‌سازی صدای آفلاین")
+                    loadOfflineTtsAsync()
+                }
+                return
+            }
+            TtsVoice.ANDROID -> {
+                if (ttsReady) {
+                    busy = true
+                    speechService?.setPause(true)
+                    if (offlineRecognizer != null) stopSherpaAudio()
+                    updateNotification("رایا در حال پاسخ‌گویی است")
+                    if (tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString()) == TextToSpeech.ERROR)
+                        fallbackToOffline(clean)
+                } else if (offlineTts != null) {
+                    playOfflineSpeech(clean)
+                } else {
+                    busy = true
+                    pendingSpeech = clean
+                    loadOfflineTtsAsync()
+                    updateNotification("صدای فارسی گوشی موجود نیست؛ آماده‌سازی صدای آفلاین")
+                }
+                return
+            }
+        }
+    }
+
+    private fun playEdgeSpeech(text: String, voice: String) {
+        busy = true
+        speechService?.setPause(true)
+        if (offlineRecognizer != null) stopSherpaAudio()
+        updateNotification("در حال دریافت صدای طبیعی فارسی از Microsoft Edge")
+        Thread {
+            try {
+                val audio = EdgeTtsClient.synthesize(text, voice)
+                val file = File(cacheDir, "raya-edge-${UUID.randomUUID()}.mp3")
+                file.writeBytes(audio)
+                handler.post {
+                    if (destroyed) { file.delete(); return@post }
+                    try {
+                        edgeAudioFile = file
+                        val player = MediaPlayer()
+                        edgePlayer = player
+                        player.setAudioAttributes(
+                            AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT)
+                                .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
+                        )
+                        player.setDataSource(file.absolutePath)
+                        player.setOnPreparedListener {
+                            updateNotification("رایا در حال صحبت است")
+                            it.start()
+                        }
+                        player.setOnCompletionListener {
+                            try { it.release() } catch (_: Exception) {}
+                            edgePlayer = null
+                            file.delete()
+                            edgeAudioFile = null
+                            resumeListening()
+                        }
+                        player.setOnErrorListener { _, what, extra ->
+                            Log.e(TAG, "Edge audio playback failed what=$what extra=$extra")
+                            fallbackToOffline(text)
+                            true
+                        }
+                        player.prepareAsync()
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Edge audio player setup failed: ${e.javaClass.simpleName}")
+                        fallbackToOffline(text)
+                    }
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Edge TTS unavailable; using offline fallback (${e.javaClass.simpleName})")
+                handler.post { if (!destroyed) fallbackToOffline(text) }
+            }
+        }.apply { name = "raya-edge-tts"; start() }
+    }
+
+    private fun fallbackToOffline(text: String) {
+        try { edgePlayer?.release() } catch (_: Exception) {}
+        edgePlayer = null
+        try { edgeAudioFile?.delete() } catch (_: Exception) {}
+        edgeAudioFile = null
+        updateNotification("صدای آنلاین در دسترس نیست؛ استفاده از صدای آفلاین")
+        if (offlineTts != null) {
+            playOfflineSpeech(text)
+        } else {
             busy = true
+            pendingSpeech = text
             speechService?.setPause(true)
             if (offlineRecognizer != null) stopSherpaAudio()
-            updateNotification("رایا در حال پاسخ‌گویی است")
-            val clean = text.replace(Regex("https?://\\S+"), " ").replace(Regex("[#*_>|]"), " ")
-                .replace(Regex("\\s+"), " ").trim().take(3500)
-            if (tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString()) == TextToSpeech.ERROR)
-                resumeListening()
-            return
+            loadOfflineTtsAsync()
         }
-        if (offlineTts != null) { playOfflineSpeech(text); return }
-        pendingSpeech = text
-        loadOfflineTtsAsync()
-        resumeListening()
-        updateNotification("آماده‌سازی صدای فارسی آفلاین")
+    }
+
+    private fun setListeningCue(listening: Boolean) {
+        if (listeningCueState == listening) return
+        val wasListening = listeningCueState
+        listeningCueState = listening
+        if (wasListening == null && !listening) return
+        if (destroyed && listening) return
+        try {
+            val generator = toneGenerator ?: ToneGenerator(AudioManager.STREAM_NOTIFICATION, 72)
+                .also { toneGenerator = it }
+            val tone = if (listening) ToneGenerator.TONE_PROP_ACK else ToneGenerator.TONE_PROP_NACK
+            generator.startTone(tone, if (listening) 115 else 180)
+        } catch (e: Exception) {
+            Log.w(TAG, "Listening cue unavailable: ${e.javaClass.simpleName}")
+        }
     }
     private fun sendToChat(message: String) {
         if (busy) return
+        setListeningCue(false)
         busy = true
         speechService?.setPause(true)
         if (offlineRecognizer != null) stopSherpaAudio()
@@ -498,6 +625,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         busy = false
         speechService?.setPause(false)
         if (!destroyed && offlineRecognizer != null) startSherpaAudio()
+        else if (!destroyed && speechService != null) setListeningCue(true)
         if (!destroyed) updateNotification("در حال شنیدن؛ برای شروع بگو رایا")
     }
     private fun foreground() {
@@ -527,6 +655,15 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
 
     override fun onDestroy() {
         destroyed = true
+        setListeningCue(false)
+        try { edgePlayer?.release() } catch (_: Exception) {}
+        edgePlayer = null
+        try { edgeAudioFile?.delete() } catch (_: Exception) {}
+        edgeAudioFile = null
+        handler.postDelayed({
+            try { toneGenerator?.release() } catch (_: Exception) {}
+            toneGenerator = null
+        }, 260)
         stopSherpaAudio()
         try { modelLoader?.interrupt() } catch (_: Exception) {}
         try { speechService?.stop(); speechService?.shutdown(); recognizer?.close(); model?.close() } catch (_: Exception) {}

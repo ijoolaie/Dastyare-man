@@ -15,6 +15,8 @@ import android.provider.Settings
 import android.view.View
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebChromeClient
+import android.webkit.WebSettings
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageButton
@@ -81,7 +83,15 @@ class MainActivity : AppCompatActivity() {
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
+        // Edge compatibility token for web apps that reject Android WebView's default Chrome-only identity.
+        // The rendering engine remains the device's Chromium-based Android WebView.
+        val defaultUserAgent = WebSettings.getDefaultUserAgent(this)
+        val chromeVersion = Regex("Chrome/([0-9.]+)").find(defaultUserAgent)?.groupValues?.get(1)
+        if (chromeVersion != null) {
+            webView.settings.userAgentString = defaultUserAgent.replace("Chrome/$chromeVersion", "EdgA/$chromeVersion")
+        }
         webView.webViewClient = WebViewClient()
+        webView.webChromeClient = WebChromeClient()
 
         if (Prefs.isPaired(this)) showApp() else showPairing()
     }
@@ -223,6 +233,7 @@ class MainActivity : AppCompatActivity() {
     private fun openSettings() {
         val options = arrayOf(
             "انتخاب مدل تشخیص گفتار",
+            "انتخاب صدا و موتور گفتار رایا",
             "هویت و حافظه رایا",
             "تاریخچه مکالمات صوتی",
             "بهینه‌سازی باتری",
@@ -233,10 +244,11 @@ class MainActivity : AppCompatActivity() {
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> openVoiceModelSettings()
-                    1 -> openMemorySettings()
-                    2 -> openVoiceHistory()
-                    3 -> openBatterySettings()
-                    4 -> {
+                    1 -> openTtsSettings()
+                    2 -> openMemorySettings()
+                    3 -> openVoiceHistory()
+                    4 -> openBatterySettings()
+                    5 -> {
                         stopService(Intent(this, VoiceAssistantService::class.java))
                         stopService(Intent(this, BridgeService::class.java))
                         Prefs.clear(this)
@@ -260,6 +272,30 @@ class MainActivity : AppCompatActivity() {
                 dialog.dismiss()
                 restartVoiceService()
                 toast("مدل انتخابی ذخیره شد: ${model.title}")
+            }
+            .setNegativeButton("بستن", null)
+            .show()
+    }
+
+    private fun openTtsSettings() {
+        val voices = TtsVoice.values()
+        val labels = voices.map { it.title }.toTypedArray()
+        var selected = voices.indexOf(TtsVoice.fromId(Prefs.ttsVoice(this))).coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("صدای رایا را انتخاب کن")
+            .setSingleChoiceItems(labels, selected) { _, which -> selected = which }
+            .setPositiveButton("ذخیره") { _, _ ->
+                val voice = voices[selected]
+                Prefs.setTtsVoice(this, voice.id)
+                restartVoiceService()
+                toast("صدای رایا ذخیره شد: ${voice.title}")
+            }
+            .setNeutralButton("پخش نمونه") { _, _ ->
+                val voice = voices[selected]
+                val test = Intent(this, VoiceAssistantService::class.java)
+                    .setAction(VoiceAssistantService.ACTION_TEST_TTS)
+                    .putExtra(VoiceAssistantService.EXTRA_TTS_VOICE, voice.id)
+                ContextCompat.startForegroundService(this, test)
             }
             .setNegativeButton("بستن", null)
             .show()
