@@ -311,27 +311,55 @@ class MainActivity : AppCompatActivity() {
 
     private fun openVoiceHistory() {
         val store = RayaMemoryStore(this)
-        val turns = store.history(80)
-        val content = if (turns.isEmpty()) "هنوز مکالمه صوتی‌ای ثبت نشده است." else turns.joinToString("\n\n") { turn ->
-            val role = if (turn.role == "user") "شما" else "رایا"
-            val time = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault()).format(java.util.Date(turn.createdAt))
-            "$role | $time\n${turn.content}"
-        }
-        val text = TextView(this).apply { setPadding(32, 24, 32, 24); textSize = 14f; this.text = content }
-        val scroll = ScrollView(this).apply { addView(text) }
-        val historyDialog = AlertDialog.Builder(this)
-            .setTitle("تاریخچه مکالمات صوتی")
-            .setView(scroll)
-            .setPositiveButton("بستن", null)
-            .setNeutralButton("پاک کردن تاریخچه", null)
-            .show()
-        historyDialog.getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-            AlertDialog.Builder(this@MainActivity)
-                .setMessage("تاریخچه محلی پاک شود؟ سوابق ذخیره‌شده روی سرور از اینجا حذف نمی‌شوند.")
-                .setNegativeButton("خیر", null)
-                .setPositiveButton("پاک شود") { _, _ -> store.clearHistory(); historyDialog.dismiss(); toast("تاریخچه محلی پاک شد") }
+        val conversations = store.conversations(50)
+        if (conversations.isEmpty()) {
+            AlertDialog.Builder(this)
+                .setTitle("Voice history")
+                .setMessage("No saved voice conversations yet.")
+                .setPositiveButton("OK", null)
                 .show()
+            return
         }
+        val labels = conversations.map { item ->
+            val preview = item.preview.replace(Regex("\\s+"), " ").take(64).ifBlank { "Conversation" }
+            val time = java.text.SimpleDateFormat("yyyy/MM/dd HH:mm", java.util.Locale.getDefault())
+                .format(java.util.Date(item.updatedAt))
+            "$time  |  ${item.turnCount} messages\n$preview"
+        }.toTypedArray()
+        AlertDialog.Builder(this)
+            .setTitle("Voice conversations")
+            .setItems(labels) { _, which ->
+                val selected = conversations[which]
+                val turns = store.turnsForConversation(selected.id)
+                val content = turns.joinToString("\n\n") { turn ->
+                    val role = if (turn.role == "user") "You" else "Raya"
+                    val time = java.text.SimpleDateFormat("HH:mm", java.util.Locale.getDefault())
+                        .format(java.util.Date(turn.createdAt))
+                    "$role | $time\n${turn.content}"
+                }
+                val text = TextView(this).apply {
+                    setPadding(32, 24, 32, 24)
+                    textSize = 14f
+                    this.text = content
+                }
+                AlertDialog.Builder(this)
+                    .setTitle("Conversation details")
+                    .setView(ScrollView(this).apply { addView(text) })
+                    .setPositiveButton("Close", null)
+                    .show()
+            }
+            .setNeutralButton("Clear all") { _, _ ->
+                AlertDialog.Builder(this)
+                    .setMessage("Delete all saved voice history? This cannot be undone.")
+                    .setNegativeButton("Cancel", null)
+                    .setPositiveButton("Delete") { _, _ ->
+                        store.clearHistory()
+                        toast("Voice history cleared")
+                    }
+                    .show()
+            }
+            .setNegativeButton("Close", null)
+            .show()
     }
     private fun openBatterySettings() {
         try {
