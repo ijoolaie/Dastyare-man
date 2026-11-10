@@ -340,7 +340,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     ),
                     maxNumSentences = 1
                 )
-                val engine = OfflineTts(config)
+                val engine = OfflineTts(config = config)
                 handler.post {
                     offlineTtsLoading = false
                     if (destroyed) { engine.release(); return@post }
