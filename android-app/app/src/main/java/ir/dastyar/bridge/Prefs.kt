@@ -22,9 +22,9 @@ object Prefs {
     fun setTtsVoice(c: Context, voice: String) { sp(c).edit().putString(KEY_TTS_VOICE, TtsVoice.fromId(voice).id).apply() }
 
     fun save(c: Context, serverUrl: String, token: String) {
-        sp(c).edit().putString(KEY_SERVER, serverUrl.trim().trimEnd('/')).putString(KEY_TOKEN, token.trim()).apply()
+        sp(c).edit().putString(KEY_SERVER, serverUrl.trim().trimEnd('/')).putString(KEY_TOKEN, token.trim()).commit()
     }
-    fun clear(c: Context) { sp(c).edit().remove(KEY_SERVER).remove(KEY_TOKEN).putBoolean(KEY_VOICE_ENABLED, false).apply() }
+    fun clear(c: Context) { sp(c).edit().remove(KEY_SERVER).remove(KEY_TOKEN).putBoolean(KEY_VOICE_ENABLED, false).commit() }
 }
 
 enum class VoiceModel(val id: String, val title: String) {

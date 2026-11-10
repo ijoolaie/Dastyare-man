@@ -250,10 +250,17 @@ class MainActivity : AppCompatActivity() {
                     3 -> openVoiceHistory()
                     4 -> openBatterySettings()
                     5 -> {
-                        stopService(Intent(this, VoiceAssistantService::class.java))
-                        stopService(Intent(this, BridgeService::class.java))
-                        Prefs.clear(this)
-                        recreate()
+                        AlertDialog.Builder(this)
+                            .setTitle("Disconnect this device?")
+                            .setMessage("This will erase the saved server address and device token. You will need to pair the app again to reconnect.")
+                            .setNegativeButton("Cancel", null)
+                            .setPositiveButton("Disconnect") { _, _ ->
+                                stopService(Intent(this, VoiceAssistantService::class.java))
+                                stopService(Intent(this, BridgeService::class.java))
+                                Prefs.clear(this)
+                                recreate()
+                            }
+                            .show()
                     }
                 }
             }
