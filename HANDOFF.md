@@ -81,3 +81,14 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Static check: `git diff --check` passed.
 - Device verification: pending; no ADB device is connected. Confirm media loudness and TTS intelligibility on a real phone before marking the phase complete.
 - Next: implement persisted activation modes (always-listen / wake-word / manual), then barge-in and single-recorder ownership.
+
+## Follow-up — Local build and APK install investigation (2026-11-11)
+- Current HEAD observed locally: `fa164e06836a8f513d518a506db64a6ef5f3319e` (`fix(android): prevent assistant audio focus from ducking media`).
+- Current branch: `fix/android-voice-barge-in-multilingual-screen`; tracked working tree clean. Numerous untracked historical APK/ZIP/log/model artifacts exist in the repository root; preserve them and do not stage them.
+- Environment re-check corrected the earlier setup note: `java` resolves to Java 25.0.2; `JAVA_HOME` is unset; `ANDROID_HOME` is unset; Android SDK Platform 34 and Build Tools 34.0.0 are NOT present at `C:\Users\Ali\AppData\Local\Android\Sdk`; `adb` exists at `C:\adb\adb.exe`, but `adb devices -l` reports no connected devices. No Gradle wrapper is present in `android-app/gradle/wrapper`.
+- Therefore a local build, `adb install`, and on-device reproduction cannot currently be performed. CI uses JDK 17, Android SDK 34 / Build Tools 34.0.0 and a repository-pinned `android-app/ci-debug.keystore`.
+- Install failure is not diagnosed yet. Required evidence: exact Android installer error text/screenshot; Android version/device model; whether an older Dastyare-man package is already installed; whether the attempted APK came from the latest Actions artifact or an older ZIP. Do not recommend uninstalling until data preservation and signing/update compatibility are checked.
+- APK configuration observed: applicationId `ir.dastyar.bridge`, minSdk 26, targetSdk 34, versionCode 17, versionName 1.16, ABIs `arm64-v8a` and `armeabi-v7a`, CI debug signing config `android-app/ci-debug.keystore`.
+- Important implementation risks still open: Vosk recognizer is accessed from the normal and barge-in branches on the same microphone thread while response callbacks can mutate lifecycle; Sherpa uses the same OfflineRecognizer for normal and barge-in decode threads. Enforce serialized ownership before claiming robust barge-in.
+- Activation modes (always-listen / wake-word / manual) are not implemented yet. Current service still auto-starts its selected ASR pipeline on model load and `handleRecognized` is wake-word/session based.
+- Next work order: resolve single microphone/recognizer ownership and activation-mode state machine; then settings/UI. Keep build CI evidence separate from device acceptance.
