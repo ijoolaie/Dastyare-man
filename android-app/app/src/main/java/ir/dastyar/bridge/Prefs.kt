@@ -10,6 +10,7 @@ object Prefs {
     private const val KEY_VOICE_MODEL = "voice_model"
     private const val KEY_VOICE_MODEL_MIGRATED = "voice_model_migrated_to_multilingual"
     private const val KEY_TTS_VOICE = "tts_voice"
+    private const val KEY_ACTIVATION_MODE = "voice_activation_mode"
 
     private fun sp(c: Context) = c.getSharedPreferences(FILE, Context.MODE_PRIVATE)
     fun serverUrl(c: Context): String = sp(c).getString(KEY_SERVER, "") ?: ""
@@ -28,6 +29,8 @@ object Prefs {
         return prefs.getString(KEY_VOICE_MODEL, VoiceModel.WHISPER.id) ?: VoiceModel.WHISPER.id
     }
     fun setVoiceModel(c: Context, model: String) { sp(c).edit().putString(KEY_VOICE_MODEL, VoiceModel.fromId(model).id).putBoolean(KEY_VOICE_MODEL_MIGRATED, true).apply() }
+    fun activationMode(c: Context): String = ActivationMode.fromId(sp(c).getString(KEY_ACTIVATION_MODE, ActivationMode.WAKE_WORD.id) ?: ActivationMode.WAKE_WORD.id).id
+    fun setActivationMode(c: Context, mode: String) { sp(c).edit().putString(KEY_ACTIVATION_MODE, ActivationMode.fromId(mode).id).apply() }
     fun ttsVoice(c: Context): String = sp(c).getString(KEY_TTS_VOICE, TtsVoice.EDGE_FARID.id) ?: TtsVoice.EDGE_FARID.id
     fun setTtsVoice(c: Context, voice: String) { sp(c).edit().putString(KEY_TTS_VOICE, TtsVoice.fromId(voice).id).apply() }
 
@@ -35,6 +38,16 @@ object Prefs {
         sp(c).edit().putString(KEY_SERVER, serverUrl.trim().trimEnd('/')).putString(KEY_TOKEN, token.trim()).commit()
     }
     fun clear(c: Context) { sp(c).edit().remove(KEY_SERVER).remove(KEY_TOKEN).putBoolean(KEY_VOICE_ENABLED, false).commit() }
+}
+
+enum class ActivationMode(val id: String, val title: String) {
+    ALWAYS("always", "\u0647\u0645\u06cc\u0634\u0647 \u06af\u0648\u0634 \u0628\u062f\u0647"),
+    WAKE_WORD("wake_word", "\u0628\u0627 \u06af\u0641\u062a\u0646 \u0631\u0627\u06cc\u0627 \u0641\u0639\u0627\u0644 \u0634\u0648"),
+    MANUAL("manual", "\u0641\u0642\u0637 \u0628\u0627 \u0641\u0634\u0631\u062f\u0646 \u062f\u06a9\u0645\u0647");
+
+    companion object {
+        fun fromId(id: String): ActivationMode = values().firstOrNull { it.id == id } ?: WAKE_WORD
+    }
 }
 
 enum class VoiceModel(val id: String, val title: String) {

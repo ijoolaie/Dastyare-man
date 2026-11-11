@@ -101,3 +101,14 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Local `jarsigner -verify` reports the APK as a JAR without a v1 manifest. This is NOT evidence that the APK is unsigned/invalid: Android APKs may use v2/v3 signing, and the authoritative CI `apksigner verify` step passed. Do not diagnose installation failure from `jarsigner` output.
 - Historical extracted PR #9 APKs are 77,970,978 bytes; the latest artifact ZIP is ~34.95 MB. The old extracted APK hashes differ by build. No exact install failure has been captured; signing mismatch, package/version conflict, device ABI/API mismatch, and damaged transfer remain unconfirmed hypotheses only.
 - Next required evidence from user: exact installer error/screenshot and phone model + Android version, plus confirmation of which artifact/APK was attempted. Preserve existing app data until update/signing compatibility is established.
+
+
+## Follow-up ? Activation modes implementation candidate (2026-11-11)
+- Working branch: `fix/android-voice-barge-in-multilingual-screen`; PR #9 remains open and must not be merged without explicit user authorization.
+- Changed `Prefs.kt`, `MainActivity.kt`, and `VoiceAssistantService.kt`. Added persistent activation mode with backward-compatible default `wake_word`; settings offer Always / Wake word / Manual.
+- Manual mode intentionally does not create an `AudioRecord` while idle. Its foreground notification exposes Start listening / Stop listening. One accepted manual utterance is sent as a command, then capture returns to idle. TTS completion does not reopen manual capture.
+- Always mode sends each accepted ASR segment directly to chat. Wake-word mode retains the existing explicit wake-word/session behavior and still uses the full ASR engine continuously; it is NOT a low-power wake-word detector.
+- Added a synchronization lock around Vosk decode and reset operations. Sherpa normal/barge-in decode concurrency remains an open risk and must be serialized before claiming robust barge-in.
+- Not implemented in this candidate: native RTL conversation screen, complete settings controls (rate/volume/sensitivity/timeouts/media policy), dedicated low-power wake-word detector, comprehensive state machine, or real-device acceptance.
+- Validation: `git diff --check` passed before commit. Local Android SDK is unavailable (`D:\Android\Sdk` is empty); `C:\adb\adb.exe devices -l` currently shows no device. CI build and `apksigner` verification are required before an APK can be considered installable.
+- Installation instruction from user: once a new APK is produced, attempt installation through ADB. If no device is connected/authorized, do not claim installation; retain the artifact and retry when ADB detects the phone.

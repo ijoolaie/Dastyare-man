@@ -104,3 +104,13 @@
 - [x] ROADMAP.md و HANDOFF.md ثبت و به branch فعلی push شدند.
 - [ ] هیچ فاز پیاده‌سازی بعدی کامل نشده است.
 - [ ] build قبلی CI موفق بوده؛ این موفقیت، تست رفتار صوتی یا دستگاه محسوب نمی‌شود.
+
+
+## Milestone ? Persisted activation modes (implementation candidate, 2026-11-11)
+- Added a persisted `voice_activation_mode` preference. Existing installations default to `wake_word` to preserve the previous wake-word behavior.
+- Added three selectable modes in Settings: `always` (each accepted speech segment is sent as a command), `wake_word` (the existing explicit Raya wake-word/session gate), and `manual` (no idle microphone capture; one command is captured after the notification action is pressed).
+- Added manual start/stop capture actions to the foreground notification. The manual mode returns to idle after one accepted command and does not automatically reopen the microphone after TTS.
+- Centralized mode-aware capture start/resume decisions in `startAudioForCurrentMode()`.
+- Serialized Vosk recognizer decode/reset access with a lock to reduce the known barge-in race.
+- Not complete: wake-word mode still uses the selected full ASR pipeline rather than a dedicated low-power detector; Sherpa recognizer concurrency still needs a dedicated serialized executor; always/manual behavior and barge-in need real-device validation. No native conversation screen or full settings audit is included in this milestone.
+- Validation status at authoring: `git diff --check` passed. Local Android SDK is absent and ADB currently reports no connected device; CI build/signature and device install are pending.
