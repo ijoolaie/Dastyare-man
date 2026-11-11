@@ -122,3 +122,12 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - ADB check after restarting the existing ADB server: `C:\adb\adb.exe devices -l` returned only `List of devices attached` with no device entries. `adb install -r` was attempted but timed out; no install success is claimed. The existing ADB binary reports version 1.0.32. An attempt to retrieve the Google platform-tools ZIP returned HTTP 404; no toolchain replacement was installed.
 - Next installation step: connect/unlock the phone, enable USB debugging, accept the RSA authorization prompt, and verify `adb devices -l` shows `device` (not `unauthorized`). Then run `adb install -r D:\android-app\ci-run86-download\app-debug.apk`; preserve existing app data and report the exact installer output.
 - Device tests remain unperformed: activation-mode switching/persistence, manual idle mic release, wake-word behavior, always-listen, barge-in, media loudness, background/reboot, and Persian/English recognition.
+
+
+## Final APK candidate ? version 1.17 / versionCode 18 (2026-11-11)
+- Current source commit for this APK: `a58d01a8f4dd053c4b1ac7194012d1bbbf5faaeb`; branch `fix/android-voice-barge-in-multilingual-screen`; PR #9 remains open/unmerged.
+- GitHub Actions run #88 (`43026268829`) succeeded through build, Android `apksigner` signature verification, and upload.
+- Artifact ID `13857257356`, name `dastyar-bridge-debug-apk`, 34,960,016 bytes, expires 2026-11-25. Run page: https://github.com/ijoolaie/Dastyare-man/actions/runs/43026268829
+- Downloaded and extracted to `D:\android-app\ci-run88-download\app-debug.apk`; 77,987,358 bytes; SHA-256 `2E6FE971B86204CD725C6C18F7662B822FD1AA1657C00CAE0DB7F71EAF1A4573`. ZIP SHA-256 `56581A7F5D3781B992EC9E11A9433CAA814881D21D68C3050269B4CC108A29A1`. Preserve this folder; do not stage it.
+- ADB was restarted and `adb devices -l` showed no device entries. `adb install -r D:\android-app\ci-run88-download\app-debug.apk` was attempted and timed out. Installation on the user's phone is NOT complete.
+- To complete the requested installation: connect/unlock the phone, enable USB debugging, accept the RSA authorization prompt, then ensure `adb devices -l` shows the device as `device`; rerun `adb install -r` with the APK path above. Do not uninstall the existing app or clear its data.

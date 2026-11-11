@@ -115,3 +115,11 @@
 - Not complete: wake-word mode still uses the selected full ASR pipeline rather than a dedicated low-power detector; Sherpa recognizer concurrency still needs a dedicated serialized executor; always/manual behavior and barge-in need real-device validation. No native conversation screen or full settings audit is included in this milestone.
 - Validation: `git diff --check` passed; GitHub Actions run #86 (`43025237456`) built the APK and `apksigner verify` passed. Artifact ID `13856413097` (`dastyar-bridge-debug-apk`, 34,959,976-byte ZIP, expires 2026-11-25).
 - Device acceptance remains pending: `C:\adb\adb.exe devices -l` lists no connected device. An `adb install -r` attempt did not complete; no successful installation is claimed.
+
+
+## Final APK candidate ? version 1.17 (2026-11-11)
+- `versionName=1.17`, `versionCode=18`.
+- GitHub Actions run #88 (`43026268829`) for commit `a58d01a8f4dd053c4b1ac7194012d1bbbf5faaeb` completed successfully; debug build, Android `apksigner` verification, and artifact upload all passed.
+- Artifact ID `13857257356`; ZIP SHA-256 `56581a7f5d3781b992ec9e11a9433caa814881d21d68c3050269b4cc108a29a1`; expires 2026-11-25.
+- Extracted APK: `D:\android-app\ci-run88-download\app-debug.apk`, 77,987,358 bytes; SHA-256 `2e6fe971b86204cd725c6c18f7662b822fd1aa1657c00cae0db7f71eaf1a4573`.
+- Installation attempt: ADB lists no connected devices; `adb install -r` timed out. Device installation is not complete and must be retried after USB debugging authorization.
