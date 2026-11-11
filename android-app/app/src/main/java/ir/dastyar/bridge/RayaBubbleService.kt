@@ -35,7 +35,7 @@ class RayaBubbleService : Service() {
         override fun onReceive(context: Context?, intent: Intent?) {
             if (intent?.hasExtra("quick_capture_active") != true) return
             val active = intent.getBooleanExtra("quick_capture_active", false)
-            bubble?.text = if (active) "\u2026" else "\u0631"
+            bubble?.text = if (active) "\u2026" else "R"
             bubble?.alpha = if (active) 0.72f else 1f
         }
     }
@@ -61,10 +61,10 @@ class RayaBubbleService : Service() {
     private fun showBubble() {
         if (!android.provider.Settings.canDrawOverlays(this) || bubble != null) return
         val density = resources.displayMetrics.density
-        val size = (58 * density).toInt()
+        val size = (44 * density).toInt()
         val view = TextView(this).apply {
-            text = "\u0631"
-            textSize = 25f
+            text = "R"
+            textSize = 19f
             setTextColor(0xFFFFFFFF.toInt())
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
@@ -74,7 +74,7 @@ class RayaBubbleService : Service() {
                 setColor(0xFF0D9488.toInt())
                 setStroke((2 * density).toInt(), 0xFF99F6E4.toInt())
             }
-            contentDescription = "Raya: tap to speak one command"
+            contentDescription = "R: tap to speak one command"
             setOnClickListener { startQuickCapture() }
         }
         val lp = WindowManager.LayoutParams(size, size,
