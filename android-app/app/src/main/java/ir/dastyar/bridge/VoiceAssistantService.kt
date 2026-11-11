@@ -311,6 +311,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     private fun startAudioForCurrentMode(forceManual: Boolean = false) {
         if (destroyed) return
         val mode = ActivationMode.fromId(Prefs.activationMode(this))
+        Log.i(TAG, "Audio mode=$mode voiceEnabled=${Prefs.isVoiceEnabled(this)} manualCapture=$manualCaptureActive forceManual=$forceManual")
         if (mode == ActivationMode.MANUAL && !manualCaptureActive && !forceManual) {
             setListeningCue(false)
             updateNotification("\u062d\u0627\u0644\u062a \u062f\u0633\u062a\u06cc \u0622\u0645\u0627\u062f\u0647 \u0627\u0633\u062a\u061b \u0628\u0631\u0627\u06cc \u0634\u0646\u06cc\u062f\u0646 \u0641\u0631\u0645\u0627\u0646 \u062f\u06a9\u0645\u0647 \u0634\u0631\u0648\u0639 \u0631\u0627 \u0628\u0632\u0646\u06cc\u062f")
@@ -352,7 +353,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         val minBuffer = AudioRecord.getMinBufferSize(16_000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (minBuffer <= 0) { updateNotification("میکروفون در دسترس نیست"); return }
         val recorder = try {
-            AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, 16_000, AudioFormat.CHANNEL_IN_MONO,
+            AudioRecord(MediaRecorder.AudioSource.MIC, 16_000, AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer * 2, 6_400))
         } catch (e: Exception) { updateNotification("راه‌اندازی میکروفون ناموفق بود: ${e.message}"); return }
         if (recorder.state != AudioRecord.STATE_INITIALIZED) { recorder.release(); return }
@@ -363,6 +364,13 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             Log.i(TAG, "Vosk audio effects: AEC=${echoCanceler?.enabled == true}, NS=${noiseSuppressor?.enabled == true}, AGC=${automaticGainControl?.enabled == true}")
         } catch (e: Exception) { Log.w(TAG, "Vosk audio preprocessing unavailable: ${e.javaClass.simpleName}") }
         try { recorder.startRecording() } catch (e: Exception) { recorder.release(); return }
+        if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+            Log.e(TAG, "Vosk microphone did not enter RECORDING state")
+            recorder.release()
+            updateNotification("Microphone did not start recording")
+            return
+        }
+        Log.i(TAG, "Vosk microphone recording session=${recorder.audioSessionId} source=MIC sampleRate=16000")
         audioRecord = recorder
         voskAudioRunning = true
         setListeningCue(!speechPlaybackActive)
@@ -371,12 +379,35 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             val silence = ShortArray(640)
             val noiseGate = AdaptiveNoiseGate()
             var bargeInFrames = 0
+            var consecutiveReadErrors = 0
+            var peakRms = 0
+            var meterFrames = 0
             while (voskAudioRunning && !destroyed) {
-                val count = try { recorder.read(buffer, 0, buffer.size) } catch (_: Exception) { -1 }
-                if (count <= 0) { if (voskAudioRunning) Thread.sleep(50); continue }
+                val count = try { recorder.read(buffer, 0, buffer.size) } catch (e: Exception) { Log.e(TAG, "Vosk microphone read exception: ${e.javaClass.simpleName}"); -1 }
+                if (count < 0) {
+                    consecutiveReadErrors++
+                    if (consecutiveReadErrors == 1) Log.w(TAG, "Vosk microphone read error=$count")
+                    if (consecutiveReadErrors >= 5) {
+                        Log.e(TAG, "Vosk microphone lost; restarting capture")
+                        voskAudioRunning = false
+                        handler.postDelayed({ if (!destroyed && (!busy || speechPlaybackActive)) restartVoskListening() }, 400)
+                        break
+                    }
+                    Thread.sleep(80)
+                    continue
+                }
+                if (count == 0) continue
+                consecutiveReadErrors = 0
                 var energy = 0.0
                 for (i in 0 until count) energy += buffer[i].toDouble() * buffer[i].toDouble()
                 val rms = kotlin.math.sqrt(energy / count).toInt()
+                peakRms = maxOf(peakRms, rms)
+                meterFrames++
+                if (meterFrames >= 50) {
+                    Log.d(TAG, "Microphone meter peakRms=$peakRms lastRms=$rms source=MIC")
+                    peakRms = 0
+                    meterFrames = 0
+                }
                 if (busy) {
                     if (speechPlaybackActive) {
                         try {
@@ -444,7 +475,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         val minBuffer = AudioRecord.getMinBufferSize(16_000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (minBuffer <= 0) { updateNotification("میکروفون این دستگاه در دسترس نیست"); return }
         val recorder = try {
-            AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, 16_000, AudioFormat.CHANNEL_IN_MONO,
+            AudioRecord(MediaRecorder.AudioSource.MIC, 16_000, AudioFormat.CHANNEL_IN_MONO,
                 AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer * 2, 6_400))
         } catch (e: Exception) { updateNotification("ساخت ضبط‌کننده صدا ناموفق بود: ${e.message}"); return }
         if (recorder.state != AudioRecord.STATE_INITIALIZED) {
@@ -459,6 +490,13 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         try { recorder.startRecording() } catch (e: Exception) {
             recorder.release(); updateNotification("شروع ضبط صدا ناموفق بود: ${e.message}"); return
         }
+        if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+            Log.e(TAG, "Sherpa microphone did not enter RECORDING state")
+            recorder.release()
+            updateNotification("Microphone did not start recording")
+            return
+        }
+        Log.i(TAG, "Sherpa microphone recording session=${recorder.audioSessionId} source=MIC sampleRate=16000")
         audioRecord = recorder
         sherpaRunning = true
         setListeningCue(!speechPlaybackActive)
@@ -468,13 +506,36 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             var speaking = false
             var silenceSamples = 0
             val noiseGate = AdaptiveNoiseGate()
+            var consecutiveReadErrors = 0
+            var peakRms = 0
+            var meterFrames = 0
             while (sherpaRunning && !destroyed) {
-                val count = try { recorder.read(buffer, 0, buffer.size) } catch (_: Exception) { -1 }
-                if (count <= 0) { if (sherpaRunning) Thread.sleep(80); continue }
+                val count = try { recorder.read(buffer, 0, buffer.size) } catch (e: Exception) { Log.e(TAG, "Sherpa microphone read exception: ${e.javaClass.simpleName}"); -1 }
+                if (count < 0) {
+                    consecutiveReadErrors++
+                    if (consecutiveReadErrors == 1) Log.w(TAG, "Sherpa microphone read error=$count")
+                    if (consecutiveReadErrors >= 5) {
+                        Log.e(TAG, "Sherpa microphone lost; restarting capture")
+                        sherpaRunning = false
+                        handler.postDelayed({ if (!destroyed && (!busy || speechPlaybackActive)) { stopSherpaAudio(); startSherpaAudio(allowDuringSpeech = speechPlaybackActive) } }, 400)
+                        break
+                    }
+                    Thread.sleep(100)
+                    continue
+                }
+                if (count == 0) continue
+                consecutiveReadErrors = 0
                 if (sherpaProcessing) { utterance.clear(); speaking = false; silenceSamples = 0; continue }
                 var energy = 0.0
                 for (i in 0 until count) energy += buffer[i].toDouble() * buffer[i].toDouble()
                 val rms = kotlin.math.sqrt(energy / count).toInt()
+                peakRms = maxOf(peakRms, rms)
+                meterFrames++
+                if (meterFrames >= 50) {
+                    Log.d(TAG, "Microphone meter peakRms=$peakRms lastRms=$rms source=MIC")
+                    peakRms = 0
+                    meterFrames = 0
+                }
                 if (busy) {
                     if (speechPlaybackActive && !sherpaProcessing) {
                         if (noiseGate.isSpeech(rms)) {
@@ -704,6 +765,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     .setTransferMode(AudioTrack.MODE_STREAM).build()
                 if (destroyed || !speechPlaybackActive || speechEpoch != playbackEpoch) { track.release(); return@Thread }
                 activeOfflineTrack = track
+                track.setVolume(1.0f)
+                Log.i(TAG, "Offline TTS output trackState=${track.state} volume=${track.volume} stream=ASSISTANT sampleRate=$sampleRate samples=${samples.size}")
                 track.play()
                 val pcm = ShortArray(4096)
                 var offset = 0
@@ -802,6 +865,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
                         )
                         player.setDataSource(file.absolutePath)
+                        player.setVolume(1.0f, 1.0f)
                         player.setOnPreparedListener {
                             if (!speechPlaybackActive || speechEpoch != playbackEpoch) {
                                 try { it.release() } catch (_: Exception) {}
@@ -810,6 +874,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                                 return@setOnPreparedListener
                             }
                             updateNotification("رایا در حال صحبت است")
+                            Log.i(TAG, "Edge TTS output starting volume=1.0 route=ASSISTANT")
                             it.start()
                         }
                         player.setOnCompletionListener {

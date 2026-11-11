@@ -145,3 +145,12 @@
 - [ ] Deploy the prepared API source patch to the standalone Raya API host (not AI-Employee).
 - [ ] Build/sign/install APK 1.19 and verify quiet-voice pickup, command execution/result reporting, and latency on the Galaxy S8.
 - [ ] Validate screen-off permission flow, screen-on, brightness, ringer, and SMS-read capability (the latter remains confirmation-gated).
+## Milestone 9 — Microphone activation and audio I/O reliability (candidate 1.20)
+- [x] Inspect actual persisted activation mode, RECORD_AUDIO permission, active recording history, input device and output routes on the Galaxy S8.
+- [x] Switch voice capture from VOICE_COMMUNICATION to MIC for both Vosk and Sherpa; retain available acoustic echo cancellation.
+- [x] Verify AudioRecord actually enters RECORDSTATE_RECORDING and expose the active mode/session/source in logs.
+- [x] Add microphone peak-RMS metering and automatic capture recovery after repeated AudioRecord read failures.
+- [x] Set explicit full playback volume for assistant TTS and log AudioTrack/MediaPlayer output initialization.
+- [ ] Build/install 1.20 and verify wake-word pickup with several quiet and normal-volume Persian/English mixed phrases.
+- [ ] Verify speaker output during media playback, no music ducking, and reliable microphone resumption after each spoken reply.
+- [ ] Recheck microphone start after screen-off, screen-on, process restart and phone-call completion.
