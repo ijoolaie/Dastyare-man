@@ -3,65 +3,73 @@
 آخرین به‌روزرسانی: 2026-11-11
 
 ## هدف
-تکمیل دستیار صوتی اندروید با سه حالت فعال‌سازی واقعی، صدای رسانه بدون duck ناخواسته، قطع طبیعی صحبت رایا هنگام صحبت کاربر، تنظیمات کاربردی و رابط فارسی RTL.
+تکمیل دستیار صوتی اندروید با سه حالت واقعی فعال‌سازی، جلوگیری از duck ناخواسته موسیقی، barge-in طبیعی، تنظیمات عملی و رابط مکالمه فارسی RTL.
 
-## مخزن و وضعیت Git
+## مخزن و وضعیت
 - Repository: `ijoolaie/Dastyare-man`
-- Local path: `D:\android-app`
-- Android module: `D:\android-app\android-app`
+- Local: `D:\android-app`
+- Module: `D:\android-app\android-app`
 - Branch: `fix/android-voice-barge-in-multilingual-screen`
-- HEAD: `4d734964231c5e00bf20d1f3e5a7c8cc31c6dc3f`
-- HEAD subject: `chore(android): bump media fix build to 1.16`
-- Previous commit: `0d65fa8544104eb57efcf90f2238709c5246d13c`
+- آخرین commit: `4205570 docs(android): add voice assistant roadmap and handoff`
+- کد برنامه در HEAD فعلی هنوز همان نسخه 1.16 / versionCode 17 است؛ آخرین کد پیش از سندها: `4d734964231c5e00bf20d1f3e5a7c8cc31c6dc3f`.
 - PR: https://github.com/ijoolaie/Dastyare-man/pull/9
-- Version: 1.16 / versionCode 17
-- Last reported GitHub Actions build: run ID `42992849093`, Debug APK build/signature verification passed; artifact ID `13842322860`, name `dastyar-bridge-debug-apk`.
-- Physical-device verification: NOT DONE. Latest `adb devices -l` returned no connected devices.
-- Local working tree: tracked files clean at inspection. Many untracked historical ZIP/APK/test/artifact files and directories exist in repo root. Preserve all of them; do not run clean/reset/delete commands.
+- آخرین CI گزارش‌شده: run ID `42992849093`، Debug APK و signature verification موفق؛ artifact ID `13842322860` با نام `dastyar-bridge-debug-apk`.
+- آخرین push مستندات به branch موفق بود.
+- ADB: `adb devices -l` هیچ دستگاه متصل نشان نداد.
+- محیط build: JDK 17 در `C:\Program Files\Java\jdk-17.0.20` موجود است؛ Java پیش‌فرض سیستم 25.0.2 است و برای Gradle 8.7 پشتیبانی نمی‌شود. Android SDK در مسیر پیش‌فرض `C:\Users\Ali\AppData\Local\Android\Sdk` وجود ندارد؛ Platform 34 و Build Tools 34.0.0 نیز یافت نشدند. build محلی فعلاً به SDK نیاز دارد.
+- Working tree در فایل‌های tracked تمیز است. تعداد زیادی فایل/پوشه untracked تاریخی در root وجود دارد؛ هیچ‌کدام را حذف یا stage نکن مگر فایل‌های مشخص و مجاز.
 
-## Files to know
-- `android-app/app/src/main/java/ir/dastyar/bridge/VoiceAssistantService.kt`: main audio/ASR/TTS service (~57 KB).
-- `Prefs.kt`: SharedPreferences; currently persists server/token, voice enabled, STT model and TTS voice only.
-- `MainActivity.kt`: pairing, WebView, settings AlertDialog navigation. No native voice conversation UI currently.
-- `activity_main.xml`: WebView plus pairing form; no native voice status, start/stop or transcript surface.
-- `AndroidManifest.xml`: microphone foreground service, boot receiver, permissions.
-- `VOICE-ASSISTANT.md`: older documentation; describes Vosk wake-word flow and 45-second active session, and is now incomplete/out of sync.
-- `app/build.gradle`: compileSdk 34, targetSdk 34, minSdk 26, Kotlin JVM 17, Vosk + sherpa-onnx dependencies.
+## اسناد مرجع
+- `ROADMAP.md`: مراحل، معیارهای خروج و وضعیت چک‌باکس‌ها.
+- `HANDOFF.md`: این سند؛ وضعیت، یافته‌ها و دستور ادامه.
+Roadmap مرجع scope است؛ handoff باید در هر milestone به‌روزرسانی شود.
 
-## Confirmed findings from first inspection
-1. Audio focus is requested with `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK` in `requestSpeechAudioFocus()`. This policy can duck other media while TTS is speaking. It must not be held during idle listening; current calls need full call-site audit.
-2. Both Vosk and Sherpa microphone paths use `MediaRecorder.AudioSource.VOICE_COMMUNICATION`, and configure AEC/NS. AGC is commented as intentionally disabled.
-3. The Vosk busy/barge-in path calls `recognizer.acceptWaveForm/result/partialResult` while the normal loop also owns that same recognizer. This is a concurrency/thread-safety risk and must be redesigned, not patched around.
-4. Sherpa barge-in creates a background decode thread and shares `offlineRecognizer`; verify whether the engine supports concurrent streams and serialize or isolate decode as required.
-5. `prepareBargeInCapture()` tries to keep/restart microphone capture during TTS. Verify one recorder owner and no overlapping recorders.
-6. `handleRecognized()` always applies wake-word/session gating; always-listen and manual modes do not yet exist as a real persisted mode.
-7. `Prefs.kt` has no activation mode, audio duck policy, speech rate/volume, sensitivity or silence timeout settings.
-8. `MainActivity.kt` has settings dialogs for STT model, TTS voice, memory, history, battery, screen control, notification access and pairing disconnect. It has no complete audio settings page and no conversation control UI.
-9. `activity_main.xml` is only WebView + pairing UI. Voice interaction appears mainly via persistent notification, not a dedicated native conversation screen.
-10. Several strings and comments in Kotlin/XML resources appear mojibake/corrupted (for example `strings.xml` and parts of MainActivity); fix carefully with UTF-8 and verify rendered Persian.
-11. `VOICE-ASSISTANT.md` documents an older behavior and needs updating after implementation.
-12. No Android device was connected at inspection time.
+## فایل‌های اصلی
+- `android-app/app/src/main/java/ir/dastyar/bridge/VoiceAssistantService.kt`: چرخه صوت، ASR و TTS (~57 KB).
+- `Prefs.kt`: SharedPreferences فعلی؛ فقط server/token، voice enabled، STT model و TTS voice.
+- `MainActivity.kt`: pairing، WebView و منوی تنظیمات AlertDialog؛ UI مکالمه native ندارد.
+- `activity_main.xml`: WebView و فرم pairing؛ فاقد status، دکمه مکالمه و transcript.
+- `AndroidManifest.xml`: foreground microphone service، boot receiver و permissions.
+- `BootReceiver.kt`: پس از reboot سرویس صوتی را در صورت voiceEnabled و permission بالا می‌آورد.
+- `VOICE-ASSISTANT.md`: سند قدیمی و ناسازگار با تغییرات جدید؛ باید پس از پیاده‌سازی به‌روزرسانی شود.
 
-## Existing implementation details to preserve/review
-- TTS paths: Android TextToSpeech, Edge TTS via MediaPlayer, Offline Sherpa TTS / AudioTrack.
-- STT choices in `VoiceModel`: Vosk, Whisper Tiny, Shenava Rizeh. `Prefs.voiceModel()` contains one-time migration logic defaulting old/null Vosk preference to Whisper Tiny.
-- TTS voices in `TtsVoice`: Edge Farid, Edge Dilara, Piper, Android.
-- Notification actions: stop listening (`ACTION_STOP`) and interrupt Raya speech (`ACTION_INTERRUPT`).
-- Wake word normalization, media strict wake-word gate, adaptive noise gate, local voice history and Raya memory.
-- Current barge-in changes are in commits `0d65fa8` and `4d73496`; treat as experimental until code review and device test.
+## یافته‌های ممیزی اولیه
+1. `requestSpeechAudioFocus()` از `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK` استفاده می‌کند؛ می‌تواند media را duck کند. نباید هنگام idle listening focus گرفته شود؛ call siteهای فعلی باید بازبینی شوند.
+2. Vosk و Sherpa هر دو AudioRecord با `VOICE_COMMUNICATION` باز می‌کنند و AEC/NS را فعال می‌کنند؛ AGC عمداً خاموش است.
+3. مسیر Vosk در زمان TTS همان `Recognizer` را در مسیر busy/barge-in استفاده می‌کند، در حالی که حلقه معمولی هم مالک آن است؛ ریسک thread-safety و decode هم‌زمان وجود دارد.
+4. مسیر Sherpa برای barge-in thread جداگانه decode می‌سازد و از `offlineRecognizer` مشترک استفاده می‌کند؛ باید concurrency آن تضمین یا serialize شود.
+5. `prepareBargeInCapture()` recorder را حین TTS فعال نگه می‌دارد؛ باید مالک واحد میکروفون و lifecycle صریح داشته باشد.
+6. `handleRecognized()` فقط wake word یا active session را می‌پذیرد؛ Always-listen و Manual هنوز به‌عنوان mode واقعی وجود ندارند.
+7. Prefs فاقد activation mode، media policy، TTS volume/rate، wake sensitivity و silence timeout است.
+8. MainActivity تنظیمات پراکنده برای STT/TTS/memory/history/battery/accessibility/notification دارد؛ صفحه تنظیمات صوتی کامل نیست.
+9. رابط native مکالمه وجود ندارد؛ اپ پس از pairing مستقیماً WebView را نشان می‌دهد.
+10. بخشی از رشته‌ها و commentها در MainActivity و strings.xml mojibake هستند؛ اصلاح UTF-8 باید با تست واقعی نمایش فارسی انجام شود.
+11. مستند VOICE-ASSISTANT.md رفتار قدیمی Vosk و 45 ثانیه session را توصیف می‌کند و باید بعداً اصلاح شود.
+12. گوشی واقعی متصل نبود؛ هیچ تست فیزیکی میکروفون/بلندگو/باتری/reboot انجام نشده است.
 
-## Immediate next actions
-1. Continue Phase 0 in ROADMAP.md. Inspect the complete call graph and concurrency/cleanup paths in VoiceAssistantService.kt. Run baseline Gradle build using existing `build-apk.ps1` / documented build flow; do not assume a wrapper exists (module listing showed no gradlew).
-2. Add tests and implement a single persisted activation-mode/state-machine design in Prefs + VoiceAssistantService before adding UI controls.
-3. Fix audio focus policy and TTS attributes; ensure idle listener never requests ducking focus.
-4. Redesign barge-in with explicit single-recorder ownership and safe ASR concurrency.
-5. Build a native Persian RTL voice screen and settings controls, preserving the existing WebView pairing and bridge features.
-6. Update documentation, run CI, and request/perform real-device acceptance when an Android device is connected.
+## قابلیت‌های فعلی که باید حفظ شوند
+- Android TTS، Edge TTS (MediaPlayer)، Offline Sherpa TTS (AudioTrack).
+- STT choices: Vosk، Whisper Tiny، Shenava Rizeh.
+- TTS choices: Edge Farid، Edge Dilara، Piper، Android.
+- notification actions: توقف شنود (`ACTION_STOP`) و توقف صحبت رایا (`ACTION_INTERRUPT`).
+- wake word normalization، media strict wake gate، adaptive noise gate.
+- local voice history و RayaMemoryStore.
+- bridge pairing و WebView، کنترل‌های دستگاه، accessibility screen control، notification listener.
+- Prefs migration فعلی برای مدل STT را بدون بررسی از بین نبر.
 
-## Acceptance rules
-- Do not merge PR #9 without explicit user approval.
-- Do not delete untracked artifacts, old APKs, ZIPs, test captures or backup files.
-- Do not claim that an APK is installed or that microphone, speaker, audio focus, wake word, battery or reboot behavior passed unless physically tested.
-- Separate automated build/test evidence from manual device acceptance.
-- Update this handoff after every meaningful milestone: commit SHA, changed files, checks, artifact ID, device test status, and remaining blockers.
-- Use ROADMAP.md as the source of truth for scope and completion checkboxes.
+## قدم‌های بعدی (ترتیب الزامی)
+1. تکمیل Phase 0: بازبینی همه call siteهای focus، start/stop recorder، cleanup و race conditionها؛ ثبت تست baseline.
+2. طراحی state machine و ActivationMode در Prefs + VoiceAssistantService؛ هر سه mode باید رفتار واقعی داشته باشند.
+3. حل single-recorder ownership و serial ASR decode؛ سپس barge-in.
+4. Audio focus: حذف duck در idle؛ تعریف mix/duck قابل تنظیم برای زمان TTS؛ صدای خروجی مستقل و قابل تنظیم.
+5. افزودن settings کامل و تست هر گزینه.
+6. ساخت native RTL conversation UI و حفظ pairing/WebView و قابلیت‌های موجود.
+7. تست CI و در نهایت device acceptance با گوشی متصل.
+
+## قواعد پذیرش و ایمنی کار
+- PR #9 را بدون اجازه صریح merge نکن.
+- هیچ فایل untracked یا artifact قدیمی را پاک نکن.
+- ادعای نصب APK یا تست واقعی صوت/باتری/reboot نکن مگر روی دستگاه انجام شده باشد.
+- build CI را از device acceptance جدا گزارش کن.
+- هر milestone: commit SHA، فایل‌های تغییرکرده، checks، artifact ID، device status و blockers را اینجا ثبت کن.
+- فقط فایل‌های موردنیاز را stage کن؛ از `git add .`، `git clean` و reset مخرب استفاده نکن.
