@@ -57,6 +57,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnConnect: Button
     private lateinit var btnSettings: ImageButton
     private lateinit var btnListening: Button
+    private lateinit var btnBack: ImageButton
 
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -79,12 +80,13 @@ class MainActivity : AppCompatActivity() {
         btnConnect = findViewById(R.id.btnConnect)
         btnSettings = findViewById(R.id.btnSettings)
         btnListening = findViewById(R.id.btnListening)
+        btnBack = findViewById(R.id.btnBack)
 
         etServer.setText(Prefs.serverUrl(this).ifEmpty { DEFAULT_SERVER_URL })
         btnConnect.setOnClickListener { connect() }
         btnSettings.setOnClickListener { openSettings() }
         btnListening.setOnClickListener { toggleListening() }
-        findViewById<ImageButton>(R.id.btnBack)?.setOnClickListener { navigateBack() }
+        btnBack.setOnClickListener { navigateBack() }
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -160,6 +162,7 @@ class MainActivity : AppCompatActivity() {
         webView.visibility = View.GONE
         btnSettings.visibility = View.GONE
         btnListening.visibility = View.GONE
+        btnBack.visibility = View.GONE
     }
 
     private fun showApp() {
@@ -167,7 +170,7 @@ class MainActivity : AppCompatActivity() {
         webView.visibility = View.VISIBLE
         btnSettings.visibility = View.VISIBLE
         btnListening.visibility = View.GONE
-        findViewById<ImageButton>(R.id.btnBack)?.visibility = View.VISIBLE
+        btnBack.visibility = View.VISIBLE
         updateListeningButton()
         ContextCompat.startForegroundService(this, Intent(this, BridgeService::class.java))
         enableVoiceAssistantIfAllowed()

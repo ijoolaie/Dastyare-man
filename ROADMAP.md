@@ -179,3 +179,15 @@
 - [ ] Deploy standalone Raya API allow-list/tool-schema fix for `screen` (and verify `state` forwarding); enable Android Accessibility service and test real screen lock.
 
 - [ ] Re-run CI against latest PR head after dialog-string syntax correction; prior rerun checked the cached merge ref and is not valid verification.
+
+
+## Milestone 12 - 1.22 device acceptance and 1.23 correction
+- [x] CI built and signature-verified APK 1.22.
+- [x] Installed 1.22 on Galaxy S8 preserving app data.
+- [x] Confirmed floating overlay permission, foreground bubble service, and system overlay window.
+- [x] Confirmed chat composer remains present and legacy full-width listener control is absent.
+- [x] Confirmed Android Back keeps the app open at WebView root.
+- [ ] Verify the visible native back arrow in 1.23 (explicit view binding correction).
+- [ ] User speaks a real one-shot command after tapping the bubble; verify `/api/chat`, command execution and TTS end-to-end.
+- [ ] User enables `Dastyar screen control` in Android Accessibility; verify `GLOBAL_ACTION_LOCK_SCREEN`.
+- [ ] Deploy model-facing API tool/schema route for the `screen` action; API source repository currently contains only README.

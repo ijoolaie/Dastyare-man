@@ -202,3 +202,11 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 
 ### CI note for Milestone 11
 - The first CI attempt exposed a missing closing quote in the overlay-permission dialog. It was fixed in `c0aa3dc`, and the bubble-state/onboarding path was hardened in `e07b070`. The workflow rerun reused its original merge ref, so a fresh PR event is required to compile the latest head; do not treat that stale rerun as validating the fixes.
+
+
+## Milestone 12 - 1.22 device installation and back-button binding correction (2026-11-11)
+- CI build `43092101657` succeeded, APK signature verification succeeded, artifact SHA-256 `a73b9766b81a656a0ee0635eea9955985b8c8e569ad5f61b85f2510e45a2dc9a`.
+- Installed APK 1.22 (versionCode 23) on Galaxy S8 without clearing app data. Confirmed `RayaBubbleService` foreground service and `SYSTEM_ALERT_WINDOW=allow`; WindowManager reports a visible `TYPE_APPLICATION_OVERLAY` bubble. ADB tap of the bubble initiated the quick-capture path (`forceManual=true`). Actual speech-to-command acceptance still needs a spoken user test.
+- Confirmed chat composer EditText remains present and old full-width native listening button is absent from the UI tree. Hardware Back no longer finishes MainActivity at the WebView root.
+- The arrow button was not present in the device accessibility tree despite the XML view; version 1.23 binds it as a required field and explicitly hides/shows it with pairing/app state. CI/device verification pending.
+- Screen action exists in `Commands.kt` and is advertised in `BridgeService.CAPS`, but Galaxy S8 currently lists the service as installed, not enabled (`enabled services` is empty). User must enable `Dastyar screen control` under Android Settings > Accessibility. Also the deployed chat API has no available source in the API repository (only README); the model-facing tool route that should queue `screen` is not deployed/verified. Do not claim screen-off is fixed yet.
