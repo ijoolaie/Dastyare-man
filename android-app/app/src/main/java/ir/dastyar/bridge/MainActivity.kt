@@ -57,7 +57,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var btnConnect: Button
     private lateinit var btnSettings: ImageButton
     private lateinit var btnListening: Button
-    private lateinit var btnBack: ImageButton
+    private lateinit var btnBack: TextView
 
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
@@ -123,6 +123,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateListeningButton()
+        if (webView.visibility == View.VISIBLE) btnBack.visibility = View.VISIBLE
         ensureFloatingButton()
         val prefs = getSharedPreferences(PERMISSION_PREFS, MODE_PRIVATE)
         val pending = prefs.getString(PENDING_PERMISSION, null) ?: return
@@ -171,6 +172,7 @@ class MainActivity : AppCompatActivity() {
         btnSettings.visibility = View.VISIBLE
         btnListening.visibility = View.GONE
         btnBack.visibility = View.VISIBLE
+        btnBack.post { if (webView.visibility == View.VISIBLE) btnBack.visibility = View.VISIBLE }
         updateListeningButton()
         ContextCompat.startForegroundService(this, Intent(this, BridgeService::class.java))
         enableVoiceAssistantIfAllowed()

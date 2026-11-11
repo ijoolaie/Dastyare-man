@@ -217,3 +217,9 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Added a 15-second no-speech timeout that resets the bubble to idle and stops the temporary capture. If the user had always-on/wake-word listening enabled before the tap, that mode resumes; if not, the microphone remains off after the one-shot reply.
 - The quick-capture timeout is cancelled as soon as speech is accepted and when the service is destroyed.
 - Bumped version to 1.24 / versionCode 25. CI and device test pending.
+
+
+## Milestone 14 - Persistent visible back arrow (candidate 1.25)
+- Replaced the native ImageButton back arrow with a high-contrast TextView arrow to make the control discoverable in the WebView overlay hierarchy.
+- The back arrow is explicitly shown after pairing and reasserted in `onResume`; it is hidden only on the pairing screen. Hardware Back remains mapped to WebView/SPA history and never finishes the app at its root.
+- Bumped version to 1.25 / versionCode 26. CI and device acceptance pending.

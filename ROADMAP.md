@@ -199,3 +199,10 @@
 - [x] Preserve always-on/wake-word listening after the one-shot response only when it was enabled before the tap.
 - [ ] Build/sign APK 1.24 and install on Galaxy S8.
 - [ ] Verify tap ? one Persian command ? chat execution ? speech response; verify timeout resets bubble and prior mic policy is preserved.
+
+
+## Milestone 14 - Visible page-back control (candidate 1.25)
+- [x] Use an accessible text arrow rather than ImageButton for the native back overlay.
+- [x] Reassert visibility when the app resumes and after loading the paired chat view.
+- [ ] Build/sign APK 1.25 and verify `btnBack` appears in the Galaxy S8 accessibility/UI tree.
+- [ ] Tap the arrow on a nested app page and confirm it navigates back; verify root does not exit.
