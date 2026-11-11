@@ -189,3 +189,12 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Expanded wake-word matching to handle ASR splitting the Persian name across whitespace while preserving source offsets for command extraction. Matching is constrained to whole-token boundaries to avoid matching inside ordinary words.
 - Bumped Android package to versionCode 22 / versionName 1.21.
 - CI build, signature verification, installation and on-device wake-word acceptance are pending.
+
+## Milestone 11 - Floating push-to-talk and navigation fixes (candidate 1.22, 2026-11-11)
+- Added `RayaBubbleService`, a persistent Android foreground service that displays a draggable circular `?` overlay above other apps. Tapping it requests a single voice command; it does not require the wake word. Long-press is not required; the bubble can be repositioned by dragging.
+- Added a dedicated `ACTION_QUICK_CAPTURE` one-shot path in `VoiceAssistantService`: it captures one utterance, sends it to `/api/chat`, and deliberately does not reopen continuous microphone capture after the spoken response. Existing wake-word/always/manual preferences are preserved.
+- Added Android overlay permission handling and a Settings entry to re-open its system permission page.
+- Hid the old full-width listening button that overlapped the chat composer. Added an in-app back arrow and changed hardware Back handling to navigate WebView history/SPA history rather than finish the activity at the root.
+- Bumped package version to 1.22 / versionCode 23. CI build and device acceptance are pending.
+- Screen-off command: Android already implements `screen` with `GLOBAL_ACTION_LOCK_SCREEN`, but requires the user to enable `Dastyar screen control` under Android Accessibility. The standalone API server must also allow/advertise `screen` and pass its `state` argument through `device_command`; source patch from prior work was prepared but is not deployed. Therefore do not claim screen-off works until API deployment and Accessibility enablement are verified.
+- Preserve existing app data and all untracked artifacts. PR #9 remains open/unmerged.

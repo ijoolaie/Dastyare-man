@@ -166,3 +166,14 @@
 - Expanded wake-word matching to handle ASR splitting the Persian name across whitespace while preserving source offsets for command extraction. Matching is constrained to whole-token boundaries to avoid matching inside ordinary words.
 - Bumped Android package to versionCode 22 / versionName 1.21.
 - CI build, signature verification, installation and on-device wake-word acceptance are pending.
+
+## Milestone 11 - Floating command button and navigation (candidate 1.22)
+- [x] Add a draggable circular system-overlay Raya button that captures one spoken command on tap without requiring the wake word.
+- [x] Keep one-shot capture isolated from continuous wake-word listening and resume no idle microphone after the reply.
+- [x] Hide the full-width listening control that covered the chat input.
+- [x] Add native page-back control and prevent Android Back from unexpectedly closing the app at the WebView root.
+- [x] Add overlay permission onboarding and a Settings entry to re-enable the floating button.
+- [ ] Build/sign APK 1.22 in GitHub Actions and install on Galaxy S8.
+- [ ] Verify bubble overlay over other apps, drag/tap, one-shot Persian/English command, and no idle microphone after TTS.
+- [ ] Verify WebView/SPA page back and text composer interaction on device.
+- [ ] Deploy standalone Raya API allow-list/tool-schema fix for `screen` (and verify `state` forwarding); enable Android Accessibility service and test real screen lock.

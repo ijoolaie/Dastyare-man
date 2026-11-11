@@ -84,6 +84,7 @@ class MainActivity : AppCompatActivity() {
         btnConnect.setOnClickListener { connect() }
         btnSettings.setOnClickListener { openSettings() }
         btnListening.setOnClickListener { toggleListening() }
+        findViewById<ImageButton>(R.id.btnBack)?.setOnClickListener { navigateBack() }
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -120,6 +121,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         updateListeningButton()
+        ensureFloatingButton()
         val prefs = getSharedPreferences(PERMISSION_PREFS, MODE_PRIVATE)
         val pending = prefs.getString(PENDING_PERMISSION, null) ?: return
         prefs.edit().remove(PENDING_PERMISSION).apply()
@@ -164,12 +166,39 @@ class MainActivity : AppCompatActivity() {
         pairingView.visibility = View.GONE
         webView.visibility = View.VISIBLE
         btnSettings.visibility = View.VISIBLE
-        btnListening.visibility = View.VISIBLE
+        btnListening.visibility = View.GONE
+        findViewById<ImageButton>(R.id.btnBack)?.visibility = View.VISIBLE
         updateListeningButton()
         ContextCompat.startForegroundService(this, Intent(this, BridgeService::class.java))
         enableVoiceAssistantIfAllowed()
         updateListeningButton()
         webView.loadUrl(Prefs.serverUrl(this))
+    }
+
+    private fun ensureFloatingButton() {
+        if (!Prefs.isPaired(this)) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            if (!getSharedPreferences(PERMISSION_PREFS, MODE_PRIVATE).getBoolean("overlay_prompted", false)) {
+                getSharedPreferences(PERMISSION_PREFS, MODE_PRIVATE).edit().putBoolean("overlay_prompted", true).apply()
+                AlertDialog.Builder(this)
+                    .setTitle("\u062f\u06a9\u0645\u0647 \u0634\u0646\u0627\u0648\u0631 \u0631\u0627\u06cc\u0627")
+                    .setMessage("\u0628\u0631\u0627\u06cc \u0646\u0645\u0627\u06cc\u0634 \u062f\u06a9\u0645\u0647 \u062f\u0627\u06cc\u0631\u0647\u200c\u0627\u06cc \u0631\u0627\u06cc\u0627 \u0631\u0648\u06cc \u0647\u0645\u0647 \u0635\u0641\u062d\u0647\u200c\u0647\u0627\u06cc \u06af\u0648\u0634\u06cc\u060c \u0627\u062c\u0627\u0632\u0647 \u0646\u0645\u0627\u06cc\u0634 \u0631\u0648\u06cc \u0628\u0631\u0646\u0627\u0645\u0647\u200c\u0647\u0627\u06cc \u062f\u06cc\u06af\u0631 \u0631\u0627 \u0641\u0639\u0627\u0644 \u06a9\u0646.)
+                    .setNegativeButton("\u0628\u0639\u062f\u0627\u064b", null)
+                    .setPositiveButton("\u0641\u0639\u0627\u0644\u200c\u0633\u0627\u0632\u06cc") { _, _ ->
+                        try { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
+                        catch (_: Exception) { toast("\u062a\u0646\u0638\u06cc\u0645 \u0645\u062c\u0648\u0632 \u0646\u0645\u0627\u06cc\u0634 \u0634\u0646\u0627\u0648\u0631 \u062f\u0631 \u062f\u0633\u062a\u0631\u0633 \u0646\u06cc\u0633\u062a") }
+                    }.show()
+            }
+            return
+        }
+        ContextCompat.startForegroundService(this, Intent(this, RayaBubbleService::class.java))
+    }
+
+    private fun navigateBack() {
+        if (webView.visibility == View.VISIBLE) {
+            if (webView.canGoBack()) webView.goBack()
+            else webView.evaluateJavascript("if(window.history.length>1){window.history.back();}", null)
+        }
     }
 
     private fun updateListeningButton() {
@@ -286,7 +315,8 @@ class MainActivity : AppCompatActivity() {
             "\u0641\u0639\u0627\u0644\u200c\u0633\u0627\u0632\u06cc \u06a9\u0646\u062a\u0631\u0644 \u062e\u0627\u0645\u0648\u0634/\u0631\u0648\u0634\u0646 \u0635\u0641\u062d\u0647",
             "\u062f\u0633\u062a\u0631\u0633\u06cc \u0627\u0639\u0644\u0627\u0646\u200c\u0647\u0627",
             "\u062a\u063a\u06cc\u06cc\u0631 \u0627\u062a\u0635\u0627\u0644 \u06cc\u0627 \u0642\u0637\u0639 \u0627\u062a\u0635\u0627\u0644",
-            "\u062d\u0627\u0644\u062a \u0641\u0639\u0627\u0644\u200c\u0633\u0627\u0632\u06cc \u0634\u0646\u0648\u062f"
+            "\u062d\u0627\u0644\u062a \u0641\u0639\u0627\u0644\u200c\u0633\u0627\u0632\u06cc \u0634\u0646\u0648\u062f",
+            "\u0645\u062c\u0648\u0632 \u062f\u06a9\u0645\u0647 \u0634\u0646\u0627\u0648\u0631 \u0631\u0627\u06cc\u0627"
         )
         AlertDialog.Builder(this)
             .setTitle("\u062a\u0646\u0638\u06cc\u0645\u0627\u062a \u062f\u0633\u062a\u06cc\u0627\u0631 \u0645\u0646")
@@ -300,6 +330,7 @@ class MainActivity : AppCompatActivity() {
                     5 -> openScreenControlSettings()
                     6 -> openNotificationAccessSettings()
                     8 -> openActivationModeSettings()
+                    9 -> openFloatingButtonSettings()
                     7 -> AlertDialog.Builder(this)
                         .setTitle("\u0642\u0637\u0639 \u0627\u062a\u0635\u0627\u0644 \u062f\u0633\u062a\u06af\u0627\u0647\u061f")
                         .setMessage("\u0628\u0627 \u0642\u0637\u0639 \u0627\u062a\u0635\u0627\u0644\u060c \u0646\u0634\u0627\u0646\u06cc \u0633\u0631\u0648\u0631 \u0648 \u062a\u0648\u06a9\u0646 \u0630\u062e\u06cc\u0631\u0647\u200c\u0634\u062f\u0647 \u067e\u0627\u06a9 \u0645\u06cc\u200c\u0634\u0648\u062f \u0648 \u0628\u0631\u0627\u06cc \u0627\u062a\u0635\u0627\u0644 \u062f\u0648\u0628\u0627\u0631\u0647 \u0628\u0627\u06cc\u062f \u062f\u0633\u062a\u06af\u0627\u0647 \u0631\u0627 \u062c\u0641\u062a\u200c\u0633\u0627\u0632\u06cc \u06a9\u0646\u06cc.")
@@ -314,6 +345,16 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             .show()
+    }
+
+    private fun openFloatingButtonSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            try { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
+            catch (_: Exception) { toast("\u062a\u0646\u0638\u06cc\u0645 \u0645\u062c\u0648\u0632 \u0646\u0645\u0627\u06cc\u0634 \u0634\u0646\u0627\u0648\u0631 \u062f\u0631 \u062f\u0633\u062a\u0631\u0633 \u0646\u06cc\u0633\u062a") }
+        } else {
+            ContextCompat.startForegroundService(this, Intent(this, RayaBubbleService::class.java))
+            toast("\u062f\u06a9\u0645\u0647 \u0634\u0646\u0627\u0648\u0631 \u0631\u0627\u06cc\u0627 \u0641\u0639\u0627\u0644 \u0627\u0633\u062a")
+        }
     }
 
     private fun openScreenControlSettings() {
@@ -500,10 +541,7 @@ class MainActivity : AppCompatActivity() {
     }
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (webView.visibility == View.VISIBLE && webView.canGoBack()) {
-            webView.goBack()
-        } else {
-            super.onBackPressed()
-        }
+        if (webView.visibility == View.VISIBLE) { navigateBack(); return }
+        moveTaskToBack(true)
     }
 }

@@ -41,6 +41,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_INTERRUPT = "ir.dastyar.bridge.voice.INTERRUPT"
         const val ACTION_TEST_TTS = "ir.dastyar.bridge.voice.TEST_TTS"
         const val ACTION_START_CAPTURE = "ir.dastyar.bridge.voice.START_CAPTURE"
+        const val ACTION_QUICK_CAPTURE = "ir.dastyar.bridge.voice.QUICK_CAPTURE"
         const val ACTION_STOP_CAPTURE = "ir.dastyar.bridge.voice.STOP_CAPTURE"
         const val ACTION_STATE_CHANGED = "ir.dastyar.bridge.voice.STATE_CHANGED"
         const val EXTRA_TTS_VOICE = "tts_voice"
@@ -88,6 +89,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     private var sherpaThread: Thread? = null
     @Volatile private var destroyed = false
     @Volatile private var manualCaptureActive = false
+    @Volatile private var quickCaptureActive = false
+    @Volatile private var quickCaptureAwaitingReply = false
 
     private val voskListener = object : RecognitionListener {
         override fun onPartialResult(hypothesis: String?) {}
@@ -133,6 +136,16 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         if (intent?.action == ACTION_INTERRUPT) {
             interruptSpeechPlayback()
+            return START_STICKY
+        }
+        if (intent?.action == ACTION_QUICK_CAPTURE) {
+            Prefs.setVoiceEnabled(this, true)
+            quickCaptureActive = true
+            quickCaptureAwaitingReply = false
+            sendBroadcast(Intent(ACTION_STATE_CHANGED).putExtra("quick_capture_active", true).setPackage(packageName))
+            if (recognizer == null && offlineRecognizer == null && modelLoader == null) loadModelAsync()
+            startAudioForCurrentMode(forceManual = true)
+            updateNotification("رایا در حال شنود فرمان است")
             return START_STICKY
         }
         if (intent?.action == ACTION_START_CAPTURE) {
@@ -224,7 +237,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     speechService = loadedSpeech
                     offlineRecognizer = loadedOffline
                     modelLoader = null
-                    startAudioForCurrentMode()
+                    startAudioForCurrentMode(forceManual = quickCaptureActive)
                     updateNotification("مدل ${selected.title} آماده است؛ بیدارباش رایا فعال است")
                 }
             } catch (e: Exception) {
@@ -692,6 +705,15 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         if (destroyed || busy) return
         val text = normalize(raw)
         if (text.isBlank()) return
+        if (quickCaptureActive) {
+            quickCaptureActive = false
+            quickCaptureAwaitingReply = true
+            stopAudioCapture()
+            sendBroadcast(Intent(ACTION_STATE_CHANGED).putExtra("quick_capture_active", false).setPackage(packageName))
+            Log.i(TAG, "Floating Raya button captured one command")
+            sendToChat(text)
+            return
+        }
         val mode = ActivationMode.fromId(Prefs.activationMode(this))
         if (mode == ActivationMode.MANUAL) {
             if (!manualCaptureActive) return
@@ -1119,7 +1141,9 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         abandonSpeechAudioFocus()
         busy = false
         speechService?.setPause(false)
-        if (!destroyed) startAudioForCurrentMode()
+        val oneShotFinished = quickCaptureAwaitingReply
+        if (oneShotFinished) quickCaptureAwaitingReply = false
+        if (!destroyed && !oneShotFinished) startAudioForCurrentMode()
         if (!destroyed) updateNotification("در حال شنیدن؛ برای شروع بگو رایا")
     }
     private fun foreground() {

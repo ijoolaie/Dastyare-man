@@ -89,7 +89,18 @@
         android:elevation="12dp"
         android:text="@string/listening_start"
         android:textSize="16sp"
-        android:textStyle="bold" />
+        android:textStyle="bold"
+        android:visibility="gone" />
+    <ImageButton
+        android:id="@+id/btnBack"
+        android:layout_width="40dp"
+        android:layout_height="40dp"
+        android:layout_gravity="top|end"
+        android:layout_margin="12dp"
+        android:background="#66000000"
+        android:contentDescription="Back"
+        android:src="@android:drawable/ic_media_previous"
+        android:visibility="gone" />
     <ImageButton
         android:id="@+id/btnSettings"
         android:layout_width="40dp"
