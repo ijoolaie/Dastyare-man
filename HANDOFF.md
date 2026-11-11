@@ -198,3 +198,7 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Bumped package version to 1.22 / versionCode 23. CI build and device acceptance are pending.
 - Screen-off command: Android already implements `screen` with `GLOBAL_ACTION_LOCK_SCREEN`, but requires the user to enable `Dastyar screen control` under Android Accessibility. The standalone API server must also allow/advertise `screen` and pass its `state` argument through `device_command`; source patch from prior work was prepared but is not deployed. Therefore do not claim screen-off works until API deployment and Accessibility enablement are verified.
 - Preserve existing app data and all untracked artifacts. PR #9 remains open/unmerged.
+
+
+### CI note for Milestone 11
+- The first CI attempt exposed a missing closing quote in the overlay-permission dialog. It was fixed in `c0aa3dc`, and the bubble-state/onboarding path was hardened in `e07b070`. The workflow rerun reused its original merge ref, so a fresh PR event is required to compile the latest head; do not treat that stale rerun as validating the fixes.

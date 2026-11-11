@@ -177,3 +177,5 @@
 - [ ] Verify bubble overlay over other apps, drag/tap, one-shot Persian/English command, and no idle microphone after TTS.
 - [ ] Verify WebView/SPA page back and text composer interaction on device.
 - [ ] Deploy standalone Raya API allow-list/tool-schema fix for `screen` (and verify `state` forwarding); enable Android Accessibility service and test real screen lock.
+
+- [ ] Re-run CI against latest PR head after dialog-string syntax correction; prior rerun checked the cached merge ref and is not valid verification.
