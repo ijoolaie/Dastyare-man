@@ -153,4 +153,8 @@
 - [x] Set explicit full playback volume for assistant TTS and log AudioTrack/MediaPlayer output initialization.
 - [ ] Build/install 1.20 and verify wake-word pickup with several quiet and normal-volume Persian/English mixed phrases.
 - [ ] Verify speaker output during media playback, no music ducking, and reliable microphone resumption after each spoken reply.
-- [ ] Recheck microphone start after screen-off, screen-on, process restart and phone-call completion.
+- [ ] Recheck microphone start after screen-off, screen-on, process restart and phone-call completion.- [x] GitHub Actions build/signature verification and 1.20 install on the connected Galaxy S8.
+- [x] Confirm persistent wake-word activation mode and active 16 kHz MIC recording session after app launch.
+- [x] Confirm real microphone RMS activity and Sherpa final transcript generation; segments without the wake word are filtered in wake-word mode.
+- [x] Run the TTS voice test: Edge TTS synthesis succeeds and MediaPlayer starts at volume 1.0 on the assistant speaker route.
+- [ ] Confirm a human-spoken wake phrase is detected (`wakeDetected=true`) and verify audible TTS from the phone speaker with the device owner.

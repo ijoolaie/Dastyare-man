@@ -172,3 +172,10 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Added explicit RECORDSTATE_RECORDING checks, session/source logs, mic level peak metering, and recovery after repeated negative AudioRecord.read results.
 - Explicitly set MediaPlayer and AudioTrack output volume to 1.0 and log output-track state/route/sample count. Do not request transient-may-duck focus: that would lower music volume, contrary to the product requirement.
 - Current installed device APK is still 1.19 while 1.20 CI is pending. Device input/output path was observed working on 1.19 at the Android API level; actual wake-word accuracy and human-audible output require a short spoken test after 1.20 installation.
+## 1.20 build and device verification (2026-11-11)
+- GitHub Actions run #95 for commit `fea02ed` completed successfully; artifact signature verification and upload succeeded. APK versionCode 21 / versionName 1.20 installed over 1.19 on the connected SM-G950F without clearing app data.
+- Device preference was set and verified as `voice_activation_mode=wake_word`, `voice_enabled=true`; foreground VoiceAssistantService and BridgeService are active.
+- 1.20 log confirms `Audio mode=WAKE_WORD`, AudioRecord session 5033, source `MIC`, 16 kHz, recording active. Live microphone meter observed peak RMS 1,986; Sherpa emitted final segments and the wake-word filter correctly ignored segments that did not contain the wake phrase.
+- Physical routes: built-in microphone available; speaker is the active output device; no phone call was active during the output test.
+- TTS test from the app voice settings: Edge Farid synthesis succeeded (32,400 bytes); MediaPlayer logged `output starting volume=1.0 route=ASSISTANT`. Human-perceived loudness still needs the device owner to confirm; software confirms the player was started, not the listener's subjective audibility.
+- Remaining acceptance test: user says “رایا، صدا رو می‌شنوی؟” once while the service is running; inspect `wakeDetected=true`, request/response and mic resume after speech. Do not claim wake-word detection verified until that event is observed.
