@@ -73,6 +73,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var activeSpeechText = ""
     @Volatile private var activeOfflineTrack: AudioTrack? = null
     private var activeUntil = 0L
+    @Volatile private var awaitingWakeCommand = false
     // Backend conversation ID and local history ID are deliberately separate.
     private var conversationId: String? = null
     private var voiceHistoryId: String = ""
@@ -768,17 +769,34 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         Log.d(TAG, "Speech segment chars=" + text.length + "; wakeDetected=" + (wake != null) + "; musicActive=" + musicActive + "; activeSession=" + (SystemClock.elapsedRealtime() < activeUntil))
         if (wake != null) {
-            // A new wake word starts a fresh local and server-side voice conversation.
-            voiceHistoryId = UUID.randomUUID().toString()
-            RayaMemoryStore(this).setProfile("voice_local_history_id", voiceHistoryId)
-            conversationId = null
-            RayaMemoryStore(this).setProfile("voice_server_conversation_id", "")
-            activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
             val command = text.substring(wake.last + 1).trim()
-            if (command.isBlank()) speak("بله، چه کاری می‌توانم انجام دهم؟") else sendToChat(command)
+            // ASR may split "Raya, what time is it?" into separate final segments.
+            // Never speak a generic greeting here: it leaks back into the mic and
+            // can retrigger the wake word continuously.
+            if (!awaitingWakeCommand) {
+                voiceHistoryId = UUID.randomUUID().toString()
+                RayaMemoryStore(this).setProfile("voice_local_history_id", voiceHistoryId)
+                conversationId = null
+                RayaMemoryStore(this).setProfile("voice_server_conversation_id", "")
+            }
+            activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
+            if (command.isBlank()) {
+                awaitingWakeCommand = true
+                setListeningCue(true)
+                updateNotification("Raya detected; listening for your command")
+                Log.i(TAG, "Wake word detected without command; waiting silently for next ASR segment")
+            } else {
+                awaitingWakeCommand = false
+                Log.i(TAG, "Wake word and command detected in one segment; command chars=${command.length}")
+                if (!executeLocalScreenCommand(command)) sendToChat(command)
+            }
         } else if (SystemClock.elapsedRealtime() < activeUntil) {
             activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
-            sendToChat(text)
+            if (awaitingWakeCommand) {
+                awaitingWakeCommand = false
+                Log.i(TAG, "Command received in ASR segment after wake word; chars=${text.length}")
+            }
+            if (!executeLocalScreenCommand(text)) sendToChat(text)
         }
     }
     private fun loadOfflineTtsAsync() {

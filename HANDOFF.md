@@ -230,3 +230,9 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Fast path runs for floating one-shot capture, manual capture, always-listening mode, wake-word command, and an active wake-word session. Non-screen requests still go to `/api/chat`.
 - If Accessibility service is not enabled, the existing Android implementation opens Accessibility settings and speaks the exact enablement requirement. `ScreenControlAccessibilityService` is currently installed but not enabled on the Galaxy S8.
 - Bumped version to 1.26 / versionCode 27. CI and device acceptance pending.
+
+
+## Milestone 16 - Wake-word response loop and compact R bubble (candidate 1.27)
+- Floating button changed to Latin `R`, 44dp diameter and 19sp glyph (previously 58dp / 25sp).
+- When ASR emits the wake word as a standalone segment, Raya now stays silently listening instead of speaking the generic greeting that can be re-captured by the microphone. The next segment in the 45-second activation window is treated as the user's command. Same-segment wake+command remains immediate.
+- Bumped version to 1.27 / versionCode 28. CI build and Galaxy S8 acceptance pending.

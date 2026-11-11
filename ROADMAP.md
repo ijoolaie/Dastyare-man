@@ -214,3 +214,11 @@
 - [x] Preserve the normal chat path for non-screen commands.
 - [ ] Build/sign APK 1.26 and install on Galaxy S8.
 - [ ] Enable `Dastyar screen control` in Android Accessibility (user confirmation required), then test voice screen-off and screen-on.
+
+
+## Milestone 16 - Wake-word loop and compact R bubble (candidate 1.27)
+- [x] Replace floating Persian glyph with English `R`; reduce bubble to 44dp / 19sp.
+- [x] Wait silently after a standalone wake-word segment; route the next ASR segment as the command.
+- [x] Keep same-segment wake+command handling.
+- [ ] Build/sign APK 1.27 and install on Galaxy S8.
+- [ ] Verify wake+command invokes `/api/chat` once and no greeting loop occurs.
