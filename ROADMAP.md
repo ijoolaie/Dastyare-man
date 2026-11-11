@@ -160,3 +160,9 @@
 - [ ] Confirm a human-spoken wake phrase is detected (`wakeDetected=true`) and verify audible TTS from the phone speaker with the device owner.
 
 - [ ] Verify Persian and Latin wake-word variants (Raya/raia) on device after the recognition-normalization fix.
+
+## Milestone 10 - Persian wake-word segmentation fix (candidate 1.21, 2026-11-11)
+- User tested the spoken wake word twice; device logs showed active microphone input and Sherpa final results, but every observed segment returned wakeDetected=false.
+- Expanded wake-word matching to handle ASR splitting the Persian name across whitespace while preserving source offsets for command extraction. Matching is constrained to whole-token boundaries to avoid matching inside ordinary words.
+- Bumped Android package to versionCode 22 / versionName 1.21.
+- CI build, signature verification, installation and on-device wake-word acceptance are pending.

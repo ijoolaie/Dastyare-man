@@ -635,13 +635,42 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     private fun wakeWordMatch(text: String, allowFuzzy: Boolean = true): IntRange? {
         val target = "\u0631\u0627\u06cc\u0627" // raya
         val aliases = setOf(target, target + "\u0647", target + "\u06cc", "raya", "raia")
-        val tokens = Regex("[\\p{L}\\p{N}]+")
-        for (match in tokens.findAll(text)) {
+        val tokenRegex = Regex("[\\p{L}\\p{N}]+")
+        val matches = tokenRegex.findAll(text).toList()
+        for (match in matches) {
             val token = match.value
             if (token in aliases) return match.range
-            // ASR may transliterate the Persian wake word or attach a short clitic.
             if (allowFuzzy && token.length in 4..6 && editDistanceAtMostOne(token, target)) return match.range
             if (allowFuzzy && token.length in 4..5 && (editDistanceAtMostOne(token, "raya") || editDistanceAtMostOne(token, "raia"))) return match.range
+        }
+
+        // Persian ASR can insert spaces inside a short wake word (e.g. "رای ا").
+        // Keep offsets into the original transcript so command extraction remains correct.
+        val compact = StringBuilder()
+        val sourceOffsets = ArrayList<Int>()
+        text.forEachIndexed { index, char ->
+            if (!char.isWhitespace()) {
+                compact.append(char)
+                sourceOffsets.add(index)
+            }
+        }
+        val compactText = compact.toString()
+        val lengths = if (allowFuzzy) 3..5 else 4..4
+        for (length in lengths) {
+            if (compactText.length < length) continue
+            for (start in 0..(compactText.length - length)) {
+                val firstOffset = sourceOffsets[start]
+                val lastOffset = sourceOffsets[start + length - 1]
+                val startsAtBoundary = firstOffset == 0 || text[firstOffset - 1].isWhitespace()
+                val endsAtBoundary = lastOffset == text.lastIndex || text[lastOffset + 1].isWhitespace()
+                if (!startsAtBoundary || !endsAtBoundary) continue
+
+                val candidate = compactText.substring(start, start + length)
+                val exact = candidate in aliases
+                val fuzzy = allowFuzzy && (editDistanceAtMostOne(candidate, target) ||
+                    (candidate.length in 4..5 && (editDistanceAtMostOne(candidate, "raya") || editDistanceAtMostOne(candidate, "raia"))))
+                if (exact || fuzzy) return firstOffset..lastOffset
+            }
         }
         return null
     }

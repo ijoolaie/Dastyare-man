@@ -183,3 +183,9 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Live 1.20 log showed continuous MIC capture and Sherpa final transcripts, but no wakeDetected=true during the user's two wake-word attempts.
 - Root cause isolated to narrow wake-word normalization/matching: Arabic/Persian character variants and Latin ASR transliteration were not all accepted.
 - Candidate fix expands normalization (Arabic yeh/alef-maqsura, tatweel, zero-width marks, case folding) and recognizes Persian plus Raya/raia token variants. Build/device verification pending.
+
+## Milestone 10 - Persian wake-word segmentation fix (candidate 1.21, 2026-11-11)
+- User tested the spoken wake word twice; device logs showed active microphone input and Sherpa final results, but every observed segment returned wakeDetected=false.
+- Expanded wake-word matching to handle ASR splitting the Persian name across whitespace while preserving source offsets for command extraction. Matching is constrained to whole-token boundaries to avoid matching inside ordinary words.
+- Bumped Android package to versionCode 22 / versionName 1.21.
+- CI build, signature verification, installation and on-device wake-word acceptance are pending.
