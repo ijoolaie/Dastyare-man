@@ -37,7 +37,8 @@
 **معیار خروج:** هر سه mode با تست/log اثبات شوند؛ Manual در idle هیچ AudioRecord نداشته باشد.
 
 ## فاز 2 — Audio Focus و صدای رسانه
-- [ ] عدم درخواست focus در حالت شنود/انتظار.
+- [x] حذف درخواست Audio Focus از مسیر TTS برای جلوگیری از duck شدن رسانه؛ سیاست mix بدون duck در کد اعمال شد (نیازمند تست دستگاه).
+- [ ] تأیید رفتار volume mix روی دستگاه واقعی و افزودن گزینه انتخابی mix/duck.
 - [ ] سیاست قابل انتخاب mix بدون duck یا duck اختیاری هنگام TTS.
 - [ ] حذف focus دائمی `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`.
 - [ ] یکسان‌سازی AudioAttributes در Android/Edge/Offline TTS.

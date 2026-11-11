@@ -785,23 +785,10 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun requestSpeechAudioFocus() {
-        if (speechAudioFocusRequest != null) return
-        if (Build.VERSION.SDK_INT < 26) return
-        try {
-            val manager = getSystemService(AudioManager::class.java)
-            val request = android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-                .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-                .setAcceptsDelayedFocusGain(false)
-                .setOnAudioFocusChangeListener { change ->
-                    if (change == AudioManager.AUDIOFOCUS_LOSS) Log.w(TAG, "Speech audio focus lost")
-                }.build()
-            val result = manager.requestAudioFocus(request)
-            if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) speechAudioFocusRequest = request
-            Log.d(TAG, "Speech audio focus result=$result")
-        } catch (e: Exception) { Log.w(TAG, "Speech audio focus unavailable: ${e.javaClass.simpleName}") }
+        // Intentionally do not request AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK.
+        // Raya is mixed with media; an assistant reply must not lower the music volume.
+        Log.d(TAG, "Audio focus request skipped: media mixing policy")
     }
-
     private fun abandonSpeechAudioFocus() {
         if (Build.VERSION.SDK_INT < 26) return
         val request = speechAudioFocusRequest ?: return

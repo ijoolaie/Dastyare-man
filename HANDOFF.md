@@ -73,3 +73,11 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - build CI را از device acceptance جدا گزارش کن.
 - هر milestone: commit SHA، فایل‌های تغییرکرده، checks، artifact ID، device status و blockers را اینجا ثبت کن.
 - فقط فایل‌های موردنیاز را stage کن؛ از `git add .`، `git clean` و reset مخرب استفاده نکن.
+
+## Milestone — Audio Focus (2026-11-11)
+- Changed `VoiceAssistantService.requestSpeechAudioFocus()` to intentionally skip requesting `AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK`.
+- Assistant TTS now uses the existing `USAGE_ASSISTANT` output attributes without explicitly asking Android to duck other media.
+- Existing release/abandon path remains harmless because no focus request is retained.
+- Static check: `git diff --check` passed.
+- Device verification: pending; no ADB device is connected. Confirm media loudness and TTS intelligibility on a real phone before marking the phase complete.
+- Next: implement persisted activation modes (always-listen / wake-word / manual), then barge-in and single-recorder ownership.
