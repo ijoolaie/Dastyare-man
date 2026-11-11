@@ -56,9 +56,11 @@ class MainActivity : AppCompatActivity() {
     private lateinit var etToken: EditText
     private lateinit var btnConnect: Button
     private lateinit var btnSettings: ImageButton
+    private lateinit var btnListening: Button
 
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == VoiceAssistantService.ACTION_STATE_CHANGED) { updateListeningButton(); return }
             val permission = intent?.getStringExtra(EXTRA_PERMISSION) ?: return
             requestPermissionIfNeeded(permission)
         }
@@ -76,10 +78,12 @@ class MainActivity : AppCompatActivity() {
         etToken = findViewById(R.id.etToken)
         btnConnect = findViewById(R.id.btnConnect)
         btnSettings = findViewById(R.id.btnSettings)
+        btnListening = findViewById(R.id.btnListening)
 
         etServer.setText(Prefs.serverUrl(this).ifEmpty { DEFAULT_SERVER_URL })
         btnConnect.setOnClickListener { connect() }
         btnSettings.setOnClickListener { openSettings() }
+        btnListening.setOnClickListener { toggleListening() }
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -99,7 +103,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        val filter = IntentFilter(ACTION_REQUEST_PERMISSION)
+        val filter = IntentFilter(ACTION_REQUEST_PERMISSION).apply { addAction(VoiceAssistantService.ACTION_STATE_CHANGED) }
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(permissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
@@ -115,6 +119,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        updateListeningButton()
         val prefs = getSharedPreferences(PERMISSION_PREFS, MODE_PRIVATE)
         val pending = prefs.getString(PENDING_PERMISSION, null) ?: return
         prefs.edit().remove(PENDING_PERMISSION).apply()
@@ -137,6 +142,7 @@ class MainActivity : AppCompatActivity() {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
                 Prefs.setVoiceEnabled(this, true)
                 ContextCompat.startForegroundService(this, Intent(this, VoiceAssistantService::class.java))
+                updateListeningButton()
                 toast("دستیار صوتی رایا فعال شد؛ بگو رایا")
             } else {
                 Prefs.setVoiceEnabled(this, false)
@@ -151,21 +157,59 @@ class MainActivity : AppCompatActivity() {
         pairingView.visibility = View.VISIBLE
         webView.visibility = View.GONE
         btnSettings.visibility = View.GONE
+        btnListening.visibility = View.GONE
     }
 
     private fun showApp() {
         pairingView.visibility = View.GONE
         webView.visibility = View.VISIBLE
         btnSettings.visibility = View.VISIBLE
+        btnListening.visibility = View.VISIBLE
+        updateListeningButton()
         ContextCompat.startForegroundService(this, Intent(this, BridgeService::class.java))
         enableVoiceAssistantIfAllowed()
+        updateListeningButton()
         webView.loadUrl(Prefs.serverUrl(this))
     }
 
+    private fun updateListeningButton() {
+        if (!::btnListening.isInitialized) return
+        val enabled = Prefs.isVoiceEnabled(this)
+        val manual = ActivationMode.fromId(Prefs.activationMode(this)) == ActivationMode.MANUAL
+        val capturing = enabled && (!manual || Prefs.isManualCaptureActive(this))
+        btnListening.text = if (capturing) getString(R.string.listening_stop) else getString(R.string.listening_start)
+        btnListening.contentDescription = btnListening.text
+    }
+
+    private fun toggleListening() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1003)
+            return
+        }
+        val manual = ActivationMode.fromId(Prefs.activationMode(this)) == ActivationMode.MANUAL
+        val enabled = Prefs.isVoiceEnabled(this)
+        val action = when {
+            !enabled && manual -> VoiceAssistantService.ACTION_START_CAPTURE
+            !enabled -> null
+            manual && Prefs.isManualCaptureActive(this) -> VoiceAssistantService.ACTION_STOP_CAPTURE
+            manual -> VoiceAssistantService.ACTION_START_CAPTURE
+            else -> VoiceAssistantService.ACTION_STOP
+        }
+        if (action == VoiceAssistantService.ACTION_STOP) {
+            ContextCompat.startForegroundService(this, Intent(this, VoiceAssistantService::class.java).setAction(action))
+        } else {
+            if (action == null) Prefs.setVoiceEnabled(this, true)
+            val intent = Intent(this, VoiceAssistantService::class.java)
+            if (action != null) intent.action = action
+            ContextCompat.startForegroundService(this, intent)
+        }
+        btnListening.postDelayed({ updateListeningButton() }, 350)
+    }
     private fun enableVoiceAssistantIfAllowed() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            Prefs.setVoiceEnabled(this, true)
-            ContextCompat.startForegroundService(this, Intent(this, VoiceAssistantService::class.java))
+            if (Prefs.isVoiceEnabled(this)) {
+                ContextCompat.startForegroundService(this, Intent(this, VoiceAssistantService::class.java))
+            }
         } else {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1003)
         }
@@ -218,6 +262,7 @@ class MainActivity : AppCompatActivity() {
                 btnConnect.text = getString(R.string.btn_connect)
                 if (ok) {
                     Prefs.save(this, server, token)
+                    Prefs.setVoiceEnabled(this, true)
                     toast("متصل شد ✅")
                     showApp()
                 } else {

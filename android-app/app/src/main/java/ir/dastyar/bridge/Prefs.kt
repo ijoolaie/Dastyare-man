@@ -11,6 +11,7 @@ object Prefs {
     private const val KEY_VOICE_MODEL_MIGRATED = "voice_model_migrated_to_multilingual"
     private const val KEY_TTS_VOICE = "tts_voice"
     private const val KEY_ACTIVATION_MODE = "voice_activation_mode"
+    private const val KEY_MANUAL_CAPTURE_ACTIVE = "manual_capture_active"
 
     private fun sp(c: Context) = c.getSharedPreferences(FILE, Context.MODE_PRIVATE)
     fun serverUrl(c: Context): String = sp(c).getString(KEY_SERVER, "") ?: ""
@@ -31,13 +32,15 @@ object Prefs {
     fun setVoiceModel(c: Context, model: String) { sp(c).edit().putString(KEY_VOICE_MODEL, VoiceModel.fromId(model).id).putBoolean(KEY_VOICE_MODEL_MIGRATED, true).apply() }
     fun activationMode(c: Context): String = ActivationMode.fromId(sp(c).getString(KEY_ACTIVATION_MODE, ActivationMode.WAKE_WORD.id) ?: ActivationMode.WAKE_WORD.id).id
     fun setActivationMode(c: Context, mode: String) { sp(c).edit().putString(KEY_ACTIVATION_MODE, ActivationMode.fromId(mode).id).apply() }
+    fun isManualCaptureActive(c: Context): Boolean = sp(c).getBoolean(KEY_MANUAL_CAPTURE_ACTIVE, false)
+    fun setManualCaptureActive(c: Context, active: Boolean) { sp(c).edit().putBoolean(KEY_MANUAL_CAPTURE_ACTIVE, active).apply() }
     fun ttsVoice(c: Context): String = sp(c).getString(KEY_TTS_VOICE, TtsVoice.EDGE_FARID.id) ?: TtsVoice.EDGE_FARID.id
     fun setTtsVoice(c: Context, voice: String) { sp(c).edit().putString(KEY_TTS_VOICE, TtsVoice.fromId(voice).id).apply() }
 
     fun save(c: Context, serverUrl: String, token: String) {
         sp(c).edit().putString(KEY_SERVER, serverUrl.trim().trimEnd('/')).putString(KEY_TOKEN, token.trim()).commit()
     }
-    fun clear(c: Context) { sp(c).edit().remove(KEY_SERVER).remove(KEY_TOKEN).putBoolean(KEY_VOICE_ENABLED, false).commit() }
+    fun clear(c: Context) { sp(c).edit().remove(KEY_SERVER).remove(KEY_TOKEN).putBoolean(KEY_VOICE_ENABLED, false).putBoolean(KEY_MANUAL_CAPTURE_ACTIVE, false).commit() }
 }
 
 enum class ActivationMode(val id: String, val title: String) {

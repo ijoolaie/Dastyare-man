@@ -123,3 +123,11 @@
 - Artifact ID `13857257356`; ZIP SHA-256 `56581a7f5d3781b992ec9e11a9433caa814881d21d68c3050269b4cc108a29a1`; expires 2026-11-25.
 - Extracted APK: `D:\android-app\ci-run88-download\app-debug.apk`, 77,987,358 bytes; SHA-256 `2e6fe971b86204cd725c6c18f7662b822fd1aa1657c00cae0db7f71eaf1a4573`.
 - Installation attempt: ADB lists no connected devices; `adb install -r` timed out. Device installation is not complete and must be retried after USB debugging authorization.
+
+## Follow-up: Bridge pairing diagnosis and in-app listening control (2026-11-11, candidate 1.18)
+- Live Galaxy S8 log showed `POST /api/devices/register HTTP 404`; the response body says the device token is invalid and directs the user to add the device from the web app's Devices tab. This is a confirmed pairing/authentication failure, not evidence of an unstable radio connection.
+- Candidate 1.18 classifies invalid-token registration/poll responses (401/403 and token-specific 404) as permanent pairing failures, stops pointless exponential retry loops, and leaves an actionable Bridge foreground-notification status. Transient transport/server errors continue using bounded backoff.
+- Added a visible main-screen Start/Stop Listening control. Manual capture state is persisted and broadcast to keep the button label synchronized; stopping the assistant is respected after relaunch, while a fresh pairing enables it initially.
+- Added a persistent preference for manual-capture state and clear it when pairing data is cleared.
+- AI chat model selection remains unimplemented. The Android chat client currently posts `conversationId`, `message`, `attachmentIds`, and `requestId` to `/api/chat`; the deployed web client uses the same payload and exposes no model catalog route. A real selector requires the standalone Raya server's supported model IDs and an API contract for per-request model selection. Do not confuse the local ASR model selector (Vosk/Whisper/Shenava) with the AI chat model selector, and do not connect this app to AI-Employee.
+- Static checks: `git diff --check` and XML parsing passed. CI build/signature verification and device acceptance are pending; no 1.18 APK is claimed yet.

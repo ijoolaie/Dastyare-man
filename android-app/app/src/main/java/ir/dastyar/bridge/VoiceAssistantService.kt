@@ -42,6 +42,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         const val ACTION_TEST_TTS = "ir.dastyar.bridge.voice.TEST_TTS"
         const val ACTION_START_CAPTURE = "ir.dastyar.bridge.voice.START_CAPTURE"
         const val ACTION_STOP_CAPTURE = "ir.dastyar.bridge.voice.STOP_CAPTURE"
+        const val ACTION_STATE_CHANGED = "ir.dastyar.bridge.voice.STATE_CHANGED"
         const val EXTRA_TTS_VOICE = "tts_voice"
         private const val CHANNEL = "raya_voice"
         private const val NOTIFICATION_ID = 43
@@ -107,6 +108,9 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         super.onCreate()
         Log.i(TAG, "Voice service created")
         foreground()
+        manualCaptureActive = false
+        Prefs.setManualCaptureActive(this, false)
+        sendBroadcast(Intent(ACTION_STATE_CHANGED))
         tts = TextToSpeech(this, this)
         val memory = RayaMemoryStore(this)
         conversationId = (memory.getProfile("voice_server_conversation_id").ifBlank { memory.getProfile("voice_conversation_id") }).takeIf { it.isNotBlank() }
@@ -120,6 +124,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            Prefs.setManualCaptureActive(this, false)
+            sendBroadcast(Intent(ACTION_STATE_CHANGED))
             setListeningCue(false)
             Prefs.setVoiceEnabled(this, false)
             stopSelf()
@@ -130,13 +136,17 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             return START_STICKY
         }
         if (intent?.action == ACTION_START_CAPTURE) {
+            Prefs.setVoiceEnabled(this, true)
             manualCaptureActive = true
+            Prefs.setManualCaptureActive(this, true)
+            sendBroadcast(Intent(ACTION_STATE_CHANGED))
             if (recognizer == null && offlineRecognizer == null && modelLoader == null) loadModelAsync()
             startAudioForCurrentMode(forceManual = true)
             return START_STICKY
         }
         if (intent?.action == ACTION_STOP_CAPTURE) {
             stopAudioCapture()
+            sendBroadcast(Intent(ACTION_STATE_CHANGED))
             updateNotification("\u0634\u0646\u0648\u062f \u062f\u0633\u062a\u06cc \u0645\u062a\u0648\u0642\u0641 \u0634\u062f")
             return START_STICKY
         }
@@ -306,13 +316,19 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             updateNotification("\u062d\u0627\u0644\u062a \u062f\u0633\u062a\u06cc \u0622\u0645\u0627\u062f\u0647 \u0627\u0633\u062a\u061b \u0628\u0631\u0627\u06cc \u0634\u0646\u06cc\u062f\u0646 \u0641\u0631\u0645\u0627\u0646 \u062f\u06a9\u0645\u0647 \u0634\u0631\u0648\u0639 \u0631\u0627 \u0628\u0632\u0646\u06cc\u062f")
             return
         }
-        if (mode == ActivationMode.MANUAL) manualCaptureActive = true
+        if (mode == ActivationMode.MANUAL) {
+            manualCaptureActive = true
+            Prefs.setManualCaptureActive(this, true)
+            sendBroadcast(Intent(ACTION_STATE_CHANGED))
+        }
         if (recognizer != null) startVoskAudio(allowDuringSpeech = speechPlaybackActive)
         else if (offlineRecognizer != null) startSherpaAudio(allowDuringSpeech = speechPlaybackActive)
     }
 
     private fun stopAudioCapture() {
         manualCaptureActive = false
+        Prefs.setManualCaptureActive(this, false)
+        sendBroadcast(Intent(ACTION_STATE_CHANGED))
         if (offlineRecognizer != null) stopSherpaAudio()
         if (recognizer != null) {
             voskAudioRunning = false
