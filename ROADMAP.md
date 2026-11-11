@@ -191,3 +191,11 @@
 - [ ] User speaks a real one-shot command after tapping the bubble; verify `/api/chat`, command execution and TTS end-to-end.
 - [ ] User enables `Dastyar screen control` in Android Accessibility; verify `GLOBAL_ACTION_LOCK_SCREEN`.
 - [ ] Deploy model-facing API tool/schema route for the `screen` action; API source repository currently contains only README.
+
+
+## Milestone 13 - One-shot capture lifecycle (candidate 1.24)
+- [x] Do not change global voice-enabled preference when using the floating button.
+- [x] Add 15-second no-speech timeout and restore the prior listening policy.
+- [x] Preserve always-on/wake-word listening after the one-shot response only when it was enabled before the tap.
+- [ ] Build/sign APK 1.24 and install on Galaxy S8.
+- [ ] Verify tap ? one Persian command ? chat execution ? speech response; verify timeout resets bubble and prior mic policy is preserved.

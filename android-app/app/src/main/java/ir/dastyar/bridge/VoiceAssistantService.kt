@@ -91,6 +91,22 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var manualCaptureActive = false
     @Volatile private var quickCaptureActive = false
     @Volatile private var quickCaptureAwaitingReply = false
+    private val quickCaptureTimeout = Runnable {
+        if (quickCaptureActive && !destroyed) {
+            quickCaptureActive = false
+            quickCaptureAwaitingReply = false
+            Thread {
+                stopAudioCapture()
+                handler.post {
+                    if (!destroyed) {
+                        sendBroadcast(Intent(ACTION_STATE_CHANGED).putExtra("quick_capture_active", false).setPackage(packageName))
+                        if (Prefs.isVoiceEnabled(this)) startAudioForCurrentMode()
+                        updateNotification("\u0632\u0645\u0627\u0646 \u0634\u0646\u0648\u062f \u062a\u0645\u0627\u0645 \u0634\u062f")
+                    }
+                }
+            }.apply { name = "raya-quick-capture-timeout"; start() }
+        }
+    }
 
     private val voskListener = object : RecognitionListener {
         override fun onPartialResult(hypothesis: String?) {}
@@ -139,9 +155,10 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             return START_STICKY
         }
         if (intent?.action == ACTION_QUICK_CAPTURE) {
-            Prefs.setVoiceEnabled(this, true)
+            handler.removeCallbacks(quickCaptureTimeout)
             quickCaptureActive = true
             quickCaptureAwaitingReply = false
+            handler.postDelayed(quickCaptureTimeout, 15_000L)
             sendBroadcast(Intent(ACTION_STATE_CHANGED).putExtra("quick_capture_active", true).setPackage(packageName))
             if (recognizer == null && offlineRecognizer == null && modelLoader == null) loadModelAsync()
             startAudioForCurrentMode(forceManual = true)
@@ -706,6 +723,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         val text = normalize(raw)
         if (text.isBlank()) return
         if (quickCaptureActive) {
+            handler.removeCallbacks(quickCaptureTimeout)
             quickCaptureActive = false
             quickCaptureAwaitingReply = true
             stopAudioCapture()
@@ -1143,7 +1161,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         speechService?.setPause(false)
         val oneShotFinished = quickCaptureAwaitingReply
         if (oneShotFinished) quickCaptureAwaitingReply = false
-        if (!destroyed && !oneShotFinished) startAudioForCurrentMode()
+        if (!destroyed && (!oneShotFinished || Prefs.isVoiceEnabled(this))) startAudioForCurrentMode()
         if (!destroyed) updateNotification("در حال شنیدن؛ برای شروع بگو رایا")
     }
     private fun foreground() {

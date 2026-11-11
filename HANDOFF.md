@@ -210,3 +210,10 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Confirmed chat composer EditText remains present and old full-width native listening button is absent from the UI tree. Hardware Back no longer finishes MainActivity at the WebView root.
 - The arrow button was not present in the device accessibility tree despite the XML view; version 1.23 binds it as a required field and explicitly hides/shows it with pairing/app state. CI/device verification pending.
 - Screen action exists in `Commands.kt` and is advertised in `BridgeService.CAPS`, but Galaxy S8 currently lists the service as installed, not enabled (`enabled services` is empty). User must enable `Dastyar screen control` under Android Settings > Accessibility. Also the deployed chat API has no available source in the API repository (only README); the model-facing tool route that should queue `screen` is not deployed/verified. Do not claim screen-off is fixed yet.
+
+
+## Milestone 13 - One-shot capture lifecycle hardening (candidate 1.24)
+- Floating-button capture no longer flips the user's global `voice_enabled` preference on. It is a temporary one-shot capture.
+- Added a 15-second no-speech timeout that resets the bubble to idle and stops the temporary capture. If the user had always-on/wake-word listening enabled before the tap, that mode resumes; if not, the microphone remains off after the one-shot reply.
+- The quick-capture timeout is cancelled as soon as speech is accepted and when the service is destroyed.
+- Bumped version to 1.24 / versionCode 25. CI and device test pending.
