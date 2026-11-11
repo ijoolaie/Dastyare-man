@@ -158,3 +158,5 @@
 - [x] Confirm real microphone RMS activity and Sherpa final transcript generation; segments without the wake word are filtered in wake-word mode.
 - [x] Run the TTS voice test: Edge TTS synthesis succeeds and MediaPlayer starts at volume 1.0 on the assistant speaker route.
 - [ ] Confirm a human-spoken wake phrase is detected (`wakeDetected=true`) and verify audible TTS from the phone speaker with the device owner.
+
+- [ ] Verify Persian and Latin wake-word variants (Raya/raia) on device after the recognition-normalization fix.

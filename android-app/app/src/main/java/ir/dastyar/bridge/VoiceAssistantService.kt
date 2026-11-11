@@ -622,21 +622,26 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     }
     private fun normalize(s: String): String = s
         .replace('\u064A', '\u06CC')
+        .replace('\u0649', '\u06CC')
         .replace('\u0643', '\u06A9')
-        .replace('\u200C', ' ')
+        .replace("\u0640", "")
+        .replace(Regex("[\\u200B-\\u200F\\uFEFF]"), " ")
         .replace(Regex("[\\u064B-\\u065F\\u0670]"), "")
         .replace(Regex("[\\u060C\\u061B\\u061F,.!?;:]+"), " ")
         .replace(Regex("\\s+"), " ")
         .trim()
+        .lowercase(java.util.Locale.ROOT)
 
     private fun wakeWordMatch(text: String, allowFuzzy: Boolean = true): IntRange? {
-        val target = "\u0631\u0627\u06cc\u0627" // ????
+        val target = "\u0631\u0627\u06cc\u0627" // raya
+        val aliases = setOf(target, target + "\u0647", target + "\u06cc", "raya", "raia")
         val tokens = Regex("[\\p{L}\\p{N}]+")
         for (match in tokens.findAll(text)) {
             val token = match.value
-            if (token == target || token == target + "\u0647") return match.range
-            // ASR can attach a short clitic or one extra character to the wake word.
+            if (token in aliases) return match.range
+            // ASR may transliterate the Persian wake word or attach a short clitic.
             if (allowFuzzy && token.length in 4..6 && editDistanceAtMostOne(token, target)) return match.range
+            if (allowFuzzy && token.length in 4..5 && (editDistanceAtMostOne(token, "raya") || editDistanceAtMostOne(token, "raia"))) return match.range
         }
         return null
     }

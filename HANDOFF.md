@@ -179,3 +179,7 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Physical routes: built-in microphone available; speaker is the active output device; no phone call was active during the output test.
 - TTS test from the app voice settings: Edge Farid synthesis succeeded (32,400 bytes); MediaPlayer logged `output starting volume=1.0 route=ASSISTANT`. Human-perceived loudness still needs the device owner to confirm; software confirms the player was started, not the listener's subjective audibility.
 - Remaining acceptance test: user says “رایا، صدا رو می‌شنوی؟” once while the service is running; inspect `wakeDetected=true`, request/response and mic resume after speech. Do not claim wake-word detection verified until that event is observed.
+### Wake-word recognition follow-up (2026-11-11)
+- Live 1.20 log showed continuous MIC capture and Sherpa final transcripts, but no wakeDetected=true during the user's two wake-word attempts.
+- Root cause isolated to narrow wake-word normalization/matching: Arabic/Persian character variants and Latin ASR transliteration were not all accepted.
+- Candidate fix expands normalization (Arabic yeh/alef-maqsura, tatweel, zero-width marks, case folding) and recognizes Persian plus Raya/raia token variants. Build/device verification pending.
