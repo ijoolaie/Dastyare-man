@@ -33,7 +33,8 @@ class RayaBubbleService : Service() {
 
     private val stateReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
-            val active = intent?.getBooleanExtra("quick_capture_active", false) ?: false
+            if (intent?.hasExtra("quick_capture_active") != true) return
+            val active = intent.getBooleanExtra("quick_capture_active", false)
             bubble?.text = if (active) "\u2026" else "\u0631"
             bubble?.alpha = if (active) 0.72f else 1f
         }

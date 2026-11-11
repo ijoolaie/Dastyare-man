@@ -173,6 +173,7 @@ class MainActivity : AppCompatActivity() {
         enableVoiceAssistantIfAllowed()
         updateListeningButton()
         webView.loadUrl(Prefs.serverUrl(this))
+        ensureFloatingButton()
     }
 
     private fun ensureFloatingButton() {
