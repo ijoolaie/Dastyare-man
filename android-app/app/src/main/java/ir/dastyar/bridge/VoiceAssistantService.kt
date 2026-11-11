@@ -766,7 +766,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 if (destroyed || !speechPlaybackActive || speechEpoch != playbackEpoch) { track.release(); return@Thread }
                 activeOfflineTrack = track
                 track.setVolume(1.0f)
-                Log.i(TAG, "Offline TTS output trackState=${track.state} volume=${track.volume} stream=ASSISTANT sampleRate=$sampleRate samples=${samples.size}")
+                Log.i(TAG, "Offline TTS output trackState=${track.state} volume=1.0 stream=ASSISTANT sampleRate=$sampleRate samples=${samples.size}")
                 track.play()
                 val pcm = ShortArray(4096)
                 var offset = 0
