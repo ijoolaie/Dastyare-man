@@ -131,3 +131,12 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Downloaded and extracted to `D:\android-app\ci-run88-download\app-debug.apk`; 77,987,358 bytes; SHA-256 `2E6FE971B86204CD725C6C18F7662B822FD1AA1657C00CAE0DB7F71EAF1A4573`. ZIP SHA-256 `56581A7F5D3781B992EC9E11A9433CAA814881D21D68C3050269B4CC108A29A1`. Preserve this folder; do not stage it.
 - ADB was restarted and `adb devices -l` showed no device entries. `adb install -r D:\android-app\ci-run88-download\app-debug.apk` was attempted and timed out. Installation on the user's phone is NOT complete.
 - To complete the requested installation: connect/unlock the phone, enable USB debugging, accept the RSA authorization prompt, then ensure `adb devices -l` shows the device as `device`; rerun `adb install -r` with the APK path above. Do not uninstall the existing app or clear its data.
+
+
+## Device installation completed ? 2026-11-11
+- User asked to retry ADB installation. On retry, device became visible: serial `ce031713e36148230c`, model `SM_G950F` (Samsung Galaxy S8 family), Android 9 / API 28.
+- Installed APK: `D:\android-app\ci-run88-download\app-debug.apk` (CI run #88, artifact ID `13857257356`, source commit `a58d01a8f4dd053c4b1ac7194012d1bbbf5faaeb`).
+- Command: `C:\adb\adb.exe -s ce031713e36148230c install -r D:\android-app\ci-run88-download\app-debug.apk` returned `Success`. Existing package was updated in place; no uninstall/data wipe.
+- Post-install package verification: `versionCode=18`, `versionName=1.17`, `minSdk=26`, `targetSdk=34`; `lastUpdateTime=2026-11-11 16:47:45`.
+- Launch verification: `adb shell monkey -p ir.dastyar.bridge -c android.intent.category.LAUNCHER 1` injected launch event; `pidof ir.dastyar.bridge` returned PID `20972`. This confirms package installation and process launch, but not full interactive/audio acceptance.
+- Next manual acceptance on device: check activation-mode settings, test Always/Wake-word/Manual separately, test media ducking and barge-in, and inspect Persian/English recognition.
