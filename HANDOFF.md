@@ -112,3 +112,13 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Not implemented in this candidate: native RTL conversation screen, complete settings controls (rate/volume/sensitivity/timeouts/media policy), dedicated low-power wake-word detector, comprehensive state machine, or real-device acceptance.
 - Validation: `git diff --check` passed before commit. Local Android SDK is unavailable (`D:\Android\Sdk` is empty); `C:\adb\adb.exe devices -l` currently shows no device. CI build and `apksigner` verification are required before an APK can be considered installable.
 - Installation instruction from user: once a new APK is produced, attempt installation through ADB. If no device is connected/authorized, do not claim installation; retain the artifact and retry when ADB detects the phone.
+
+
+## Follow-up correction ? Activation mode CI artifact and ADB attempt (2026-11-11)
+- Current HEAD: `8403f381de74f5c0791c4ec2dafbfbcebd56355d` (`feat(android): add persisted voice activation modes`). Branch push succeeded; PR #9 remains open and unmerged.
+- GitHub Actions run #86: `43025237456` completed successfully. All steps passed: JDK 17, Android SDK, Gradle 8.7, `gradle clean assembleDebug`, Android `apksigner verify --verbose --print-certs`, and artifact upload.
+- Artifact: `dastyar-bridge-debug-apk`, ID `13856413097`, ZIP size 34,959,976 bytes, SHA-256 `65bcff19e94654a7f0460bbd58a09040ef752dff548f7ecff4aafac8e07bac3c`, expires 2026-11-25. Run page: https://github.com/ijoolaie/Dastyare-man/actions/runs/43025237456
+- Downloaded/extracted on Windows to `D:\android-app\ci-run86-download\app-debug.apk`; APK size 77,987,362 bytes; SHA-256 `F9332DB01041B70F52CBB4301D835878A6E6BE65D3E2A2EAF39BAEBF4D33796E`. This folder is intentionally untracked and must be preserved.
+- ADB check after restarting the existing ADB server: `C:\adb\adb.exe devices -l` returned only `List of devices attached` with no device entries. `adb install -r` was attempted but timed out; no install success is claimed. The existing ADB binary reports version 1.0.32. An attempt to retrieve the Google platform-tools ZIP returned HTTP 404; no toolchain replacement was installed.
+- Next installation step: connect/unlock the phone, enable USB debugging, accept the RSA authorization prompt, and verify `adb devices -l` shows `device` (not `unauthorized`). Then run `adb install -r D:\android-app\ci-run86-download\app-debug.apk`; preserve existing app data and report the exact installer output.
+- Device tests remain unperformed: activation-mode switching/persistence, manual idle mic release, wake-word behavior, always-listen, barge-in, media loudness, background/reboot, and Persian/English recognition.

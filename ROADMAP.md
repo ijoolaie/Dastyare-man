@@ -113,4 +113,5 @@
 - Centralized mode-aware capture start/resume decisions in `startAudioForCurrentMode()`.
 - Serialized Vosk recognizer decode/reset access with a lock to reduce the known barge-in race.
 - Not complete: wake-word mode still uses the selected full ASR pipeline rather than a dedicated low-power detector; Sherpa recognizer concurrency still needs a dedicated serialized executor; always/manual behavior and barge-in need real-device validation. No native conversation screen or full settings audit is included in this milestone.
-- Validation status at authoring: `git diff --check` passed. Local Android SDK is absent and ADB currently reports no connected device; CI build/signature and device install are pending.
+- Validation: `git diff --check` passed; GitHub Actions run #86 (`43025237456`) built the APK and `apksigner verify` passed. Artifact ID `13856413097` (`dastyar-bridge-debug-apk`, 34,959,976-byte ZIP, expires 2026-11-25).
+- Device acceptance remains pending: `C:\adb\adb.exe devices -l` lists no connected device. An `adb install -r` attempt did not complete; no successful installation is claimed.
