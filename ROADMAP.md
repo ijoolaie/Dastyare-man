@@ -222,3 +222,11 @@
 - [x] Keep same-segment wake+command handling.
 - [ ] Build/sign APK 1.27 and install on Galaxy S8.
 - [ ] Verify wake+command invokes `/api/chat` once and no greeting loop occurs.
+
+
+## Milestone 17 - ALWAYS-mode wake-word parsing (candidate 1.28)
+- [x] Parse and remove `????` in ALWAYS mode instead of forwarding it as part of the prompt.
+- [x] Wait silently for the following ASR segment when wake word is detected alone.
+- [x] Keep direct always-listening command behavior when no wake word is used.
+- [ ] Build and install APK 1.28.
+- [ ] Verify `????? ???? ?????` yields one actual answer and no generic greeting loop.

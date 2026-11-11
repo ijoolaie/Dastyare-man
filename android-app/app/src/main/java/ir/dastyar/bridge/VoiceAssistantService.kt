@@ -758,11 +758,55 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             if (!executeLocalScreenCommand(text)) sendToChat(text)
             return
         }
+        val musicActive = isMusicPlaybackActive()
         if (mode == ActivationMode.ALWAYS) {
-            if (!executeLocalScreenCommand(text)) sendToChat(text)
+            // ALWAYS mode used to bypass wake-word parsing entirely. That meant
+            // "Raya, what time is it?" was sent verbatim and often got a generic
+            // greeting instead of the actual command. Strip the wake word here too.
+            val alwaysWake = wakeWordMatch(text, allowFuzzy = !musicActive)
+            val now = SystemClock.elapsedRealtime()
+            if (alwaysWake != null) {
+                val command = text.substring(alwaysWake.last + 1).trim()
+                if (!awaitingWakeCommand) {
+                    voiceHistoryId = UUID.randomUUID().toString()
+                    RayaMemoryStore(this).setProfile("voice_local_history_id", voiceHistoryId)
+                    conversationId = null
+                    RayaMemoryStore(this).setProfile("voice_server_conversation_id", "")
+                }
+                activeUntil = now + SESSION_MS
+                if (command.isBlank()) {
+                    awaitingWakeCommand = true
+                    wakeCommandTimeout?.let { handler.removeCallbacks(it) }
+                    wakeCommandTimeout = Runnable {
+                        if (awaitingWakeCommand) {
+                            awaitingWakeCommand = false
+                            activeUntil = 0L
+                            Log.i(TAG, "ALWAYS-mode wake command wait expired")
+                            updateNotification("Wake command timed out; say Raya to try again")
+                        }
+                    }.also { handler.postDelayed(it, 10_000L) }
+                    setListeningCue(true)
+                    updateNotification("Raya detected; listening for your command")
+                    Log.i(TAG, "ALWAYS mode: wake word detected without command; waiting silently")
+                } else {
+                    awaitingWakeCommand = false
+                    wakeCommandTimeout?.let { handler.removeCallbacks(it) }
+                    wakeCommandTimeout = null
+                    Log.i(TAG, "ALWAYS mode: stripped wake word; command chars=${command.length}")
+                    if (!executeLocalScreenCommand(command)) sendToChat(command)
+                }
+            } else if (awaitingWakeCommand && now < activeUntil) {
+                awaitingWakeCommand = false
+                wakeCommandTimeout?.let { handler.removeCallbacks(it) }
+                wakeCommandTimeout = null
+                activeUntil = now + SESSION_MS
+                Log.i(TAG, "ALWAYS mode: command received after standalone wake word; chars=${text.length}")
+                if (!executeLocalScreenCommand(text)) sendToChat(text)
+            } else {
+                if (!executeLocalScreenCommand(text)) sendToChat(text)
+            }
             return
         }
-        val musicActive = isMusicPlaybackActive()
         val wake = wakeWordMatch(text, allowFuzzy = !musicActive)
         if (musicActive && (wake == null || wake.first != 0)) {
             Log.d(TAG, "Ignoring transcript while media playback is active; explicit wake word required")

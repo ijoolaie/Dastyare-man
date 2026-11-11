@@ -236,3 +236,9 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Floating button changed to Latin `R`, 44dp diameter and 19sp glyph (previously 58dp / 25sp).
 - When ASR emits the wake word as a standalone segment, Raya now stays silently listening instead of speaking the generic greeting that can be re-captured by the microphone. The next segment in the 45-second activation window is treated as the user's command. Same-segment wake+command remains immediate.
 - Bumped version to 1.27 / versionCode 28. CI build and Galaxy S8 acceptance pending.
+
+
+## Milestone 17 - ALWAYS-mode wake-word parsing (candidate 1.28)
+- Fixed a separate root cause: `ActivationMode.ALWAYS` previously bypassed wake-word parsing and sent `"Raya, ..."` verbatim to `/api/chat`, which could produce a generic greeting rather than execute the command.
+- ALWAYS mode now strips the wake word, waits silently up to 10 seconds if ASR emits it alone, and forwards the next transcript as the command. Wake-triggered turns receive a fresh voice conversation ID; ordinary always-listening utterances without a wake word still retain their existing behavior.
+- Bumped to 1.28 / versionCode 29. CI and on-device validation pending.
