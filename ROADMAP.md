@@ -136,3 +136,12 @@
 - Version 1.18 / versionCode 19 was installed successfully by ADB on the Samsung Galaxy S8 (`ce031713e36148230c`); package version and process launch were verified.
 - Manual UI/audio acceptance is still pending because the phone display was off and another Samsung activity was foreground during the check. Network/Bridge reconnect was not verified after install; the prior invalid-token 404 still requires a fresh Android device token from Toolbox > Devices.
 - AI model selection is still blocked on the standalone Raya backend API contract; it is not implemented in 1.18.
+## Milestone 8 — Speech pickup and phone command execution (candidate 1.19)
+- [x] Lower the fixed microphone gate floor after device logs showed ordinary quiet speech below the previous 420/520 threshold.
+- [x] Add stage timing logs around `/api/chat` to measure request latency without logging spoken content.
+- [x] Align Android Bridge capability advertisement with the existing `sms_read` command implementation.
+- [x] Prepare API changes for missing `screen`, `brightness`, `ringer`, and `device_status` allow-list entries and missing `state`/`mode` argument forwarding.
+- [x] Remove the unnecessary mandatory `list_devices` call before simple single-phone commands in the API agent instructions; retain server-side capability validation and sensitive-operation confirmations.
+- [ ] Deploy the prepared API source patch to the standalone Raya API host (not AI-Employee).
+- [ ] Build/sign/install APK 1.19 and verify quiet-voice pickup, command execution/result reporting, and latency on the Galaxy S8.
+- [ ] Validate screen-off permission flow, screen-on, brightness, ringer, and SMS-read capability (the latter remains confirmation-gated).

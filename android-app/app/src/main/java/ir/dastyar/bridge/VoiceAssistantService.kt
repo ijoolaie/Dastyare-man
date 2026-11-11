@@ -258,7 +258,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         else floor * 0.94 + ambient * 0.06
             }
             val musicActive = isMusicPlaybackActive()
-            val threshold = maxOf(if (musicActive) 520.0 else 420.0, floor * if (musicActive) 1.55 else 1.45).coerceAtMost(9000.0)
+            val threshold = maxOf(if (musicActive) 180.0 else 150.0, floor * if (musicActive) 1.5 else 1.3).coerceAtMost(9000.0)
             if (frames % 50 == 0) Log.d(TAG, "Audio gate rms=$rms ambient=${floor.toInt()} threshold=${threshold.toInt()}")
             return rms >= threshold
         }
@@ -919,6 +919,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         if (offlineRecognizer != null) stopSherpaAudio()
         updateNotification("در حال ارسال درخواست به رایا")
         Thread {
+            val requestStartedAt = SystemClock.elapsedRealtime()
+            Log.i(TAG, "Chat request started chars=${message.length}")
             var answer = ""
             var failure: String? = null
             val memory = RayaMemoryStore(this)
@@ -939,7 +941,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     try {
                         conn.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
                         val status = conn.responseCode
-                        Log.i(TAG, "Chat HTTP status=" + status + " attempt=" + (attempt + 1))
+                        Log.i(TAG, "Chat HTTP status=" + status + " attempt=" + (attempt + 1) + " elapsedMs=" + (SystemClock.elapsedRealtime() - requestStartedAt))
                         if (status !in 200..299) {
                             val retryable = status == 429 || status == 502 || status == 503 || status == 504
                             if (retryable && attempt < 2) {
