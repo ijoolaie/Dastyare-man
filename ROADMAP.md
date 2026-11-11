@@ -131,3 +131,8 @@
 - Added a persistent preference for manual-capture state and clear it when pairing data is cleared.
 - AI chat model selection remains unimplemented. The Android chat client currently posts `conversationId`, `message`, `attachmentIds`, and `requestId` to `/api/chat`; the deployed web client uses the same payload and exposes no model catalog route. A real selector requires the standalone Raya server's supported model IDs and an API contract for per-request model selection. Do not confuse the local ASR model selector (Vosk/Whisper/Shenava) with the AI chat model selector, and do not connect this app to AI-Employee.
 - Static checks: `git diff --check` and XML parsing passed. CI build/signature verification and device acceptance are pending; no 1.18 APK is claimed yet.
+## Version 1.18 CI and installation record (2026-11-11)
+- CI run #91 (`43032841754`) completed build, signature verification, and artifact upload successfully; artifact `13862935105`.
+- Version 1.18 / versionCode 19 was installed successfully by ADB on the Samsung Galaxy S8 (`ce031713e36148230c`); package version and process launch were verified.
+- Manual UI/audio acceptance is still pending because the phone display was off and another Samsung activity was foreground during the check. Network/Bridge reconnect was not verified after install; the prior invalid-token 404 still requires a fresh Android device token from Toolbox > Devices.
+- AI model selection is still blocked on the standalone Raya backend API contract; it is not implemented in 1.18.
