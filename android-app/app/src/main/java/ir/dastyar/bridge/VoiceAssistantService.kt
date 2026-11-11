@@ -718,6 +718,23 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         return edits <= 1
     }
 
+
+    /** Execute simple screen power commands locally; this is an Android API action, never a shell command. */
+    private fun executeLocalScreenCommand(raw: String): Boolean {
+        val text = normalize(raw)
+        val mentionsScreen = listOf("\u0635\u0641\u062d\u0647", "\u0646\u0645\u0627\u06cc\u0634\u06af\u0631", "screen", "display").any { text.contains(it) } ||
+            (text.contains("\u06af\u0648\u0634\u06cc") && text.contains("\u0642\u0641\u0644"))
+        if (!mentionsScreen) return false
+        val wantsOff = listOf("\u062e\u0627\u0645\u0648\u0634", "\u0642\u0641\u0644", "screen off", "turn off", "switch off", "lock screen").any { text.contains(it) }
+        val wantsOn = listOf("\u0631\u0648\u0634\u0646", "\u0628\u06cc\u062f\u0627\u0631", "screen on", "turn on", "wake screen", "display on").any { text.contains(it) }
+        if (!wantsOff && !wantsOn) return false
+        val state = if (wantsOff) "off" else "on"
+        val (ok, message) = Commands.execute(this, "screen", JSONObject().put("state", state))
+        Log.i(TAG, "Local Android screen command state=$state ok=$ok accessibility=${ScreenControlAccessibilityService.isActive()}")
+        speak(message)
+        return true
+    }
+
     private fun handleRecognized(raw: String) {
         if (destroyed || busy) return
         val text = normalize(raw)
@@ -729,18 +746,18 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             stopAudioCapture()
             sendBroadcast(Intent(ACTION_STATE_CHANGED).putExtra("quick_capture_active", false).setPackage(packageName))
             Log.i(TAG, "Floating Raya button captured one command")
-            sendToChat(text)
+            if (!executeLocalScreenCommand(text)) sendToChat(text)
             return
         }
         val mode = ActivationMode.fromId(Prefs.activationMode(this))
         if (mode == ActivationMode.MANUAL) {
             if (!manualCaptureActive) return
             stopAudioCapture()
-            sendToChat(text)
+            if (!executeLocalScreenCommand(text)) sendToChat(text)
             return
         }
         if (mode == ActivationMode.ALWAYS) {
-            sendToChat(text)
+            if (!executeLocalScreenCommand(text)) sendToChat(text)
             return
         }
         val musicActive = isMusicPlaybackActive()

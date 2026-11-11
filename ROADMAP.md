@@ -206,3 +206,11 @@
 - [x] Reassert visibility when the app resumes and after loading the paired chat view.
 - [ ] Build/sign APK 1.25 and verify `btnBack` appears in the Galaxy S8 accessibility/UI tree.
 - [ ] Tap the arrow on a nested app page and confirm it navigates back; verify root does not exit.
+
+
+## Milestone 15 - Native local screen action (candidate 1.26)
+- [x] Detect explicit Persian/English screen-off and screen-on commands locally before forwarding other speech to the model.
+- [x] Execute the Android `GLOBAL_ACTION_LOCK_SCREEN` / native wake-lock implementation through `Commands`, not PowerShell.
+- [x] Preserve the normal chat path for non-screen commands.
+- [ ] Build/sign APK 1.26 and install on Galaxy S8.
+- [ ] Enable `Dastyar screen control` in Android Accessibility (user confirmation required), then test voice screen-off and screen-on.

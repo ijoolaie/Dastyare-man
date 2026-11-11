@@ -223,3 +223,10 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Replaced the native ImageButton back arrow with a high-contrast TextView arrow to make the control discoverable in the WebView overlay hierarchy.
 - The back arrow is explicitly shown after pairing and reasserted in `onResume`; it is hidden only on the pairing screen. Hardware Back remains mapped to WebView/SPA history and never finishes the app at its root.
 - Bumped version to 1.25 / versionCode 26. CI and device acceptance pending.
+
+
+## Milestone 15 - Local Android screen commands (candidate 1.26)
+- Added a voice-side fast path for explicit Persian/English screen lock/off and wake/on phrases. It calls `Commands.execute(..., "screen", {state})` directly on Android; it never attempts PowerShell or a shell command on the phone.
+- Fast path runs for floating one-shot capture, manual capture, always-listening mode, wake-word command, and an active wake-word session. Non-screen requests still go to `/api/chat`.
+- If Accessibility service is not enabled, the existing Android implementation opens Accessibility settings and speaks the exact enablement requirement. `ScreenControlAccessibilityService` is currently installed but not enabled on the Galaxy S8.
+- Bumped version to 1.26 / versionCode 27. CI and device acceptance pending.
