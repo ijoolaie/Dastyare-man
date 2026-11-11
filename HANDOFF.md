@@ -92,3 +92,12 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Important implementation risks still open: Vosk recognizer is accessed from the normal and barge-in branches on the same microphone thread while response callbacks can mutate lifecycle; Sherpa uses the same OfflineRecognizer for normal and barge-in decode threads. Enforce serialized ownership before claiming robust barge-in.
 - Activation modes (always-listen / wake-word / manual) are not implemented yet. Current service still auto-starts its selected ASR pipeline on model load and `handleRecognized` is wake-word/session based.
 - Next work order: resolve single microphone/recognizer ownership and activation-mode state machine; then settings/UI. Keep build CI evidence separate from device acceptance.
+
+## Follow-up correction — CI and signing evidence (2026-11-11, commit 720df6d)
+- Current HEAD is `720df6d6f24819d79e3583f387ec199af535b14a`; PR #9 remains open and unmerged.
+- GitHub Actions run `43021729016` (run #84) completed successfully. Every job step passed, including `Build debug APK`, `Verify APK signature` using Android `apksigner`, and `Upload APK`.
+- Latest artifact: `dastyar-bridge-debug-apk`, artifact ID `13855940026`, 34,954,691 bytes, expires 2026-11-25. Artifact download is available from the run page: https://github.com/ijoolaie/Dastyare-man/actions/runs/43021729016
+- Corrected local environment facts: JDK 17.0.20 IS installed at `C:\Program Files\Java\jdk-17.0.20`; JDK 25 is also installed. `D:\Android\Sdk` exists but is empty. No Android SDK platforms/build-tools or `sdkmanager` were found. `adb` exists at `C:\adb\adb.exe`; no device is currently connected. No Gradle wrapper is present.
+- Local `jarsigner -verify` reports the APK as a JAR without a v1 manifest. This is NOT evidence that the APK is unsigned/invalid: Android APKs may use v2/v3 signing, and the authoritative CI `apksigner verify` step passed. Do not diagnose installation failure from `jarsigner` output.
+- Historical extracted PR #9 APKs are 77,970,978 bytes; the latest artifact ZIP is ~34.95 MB. The old extracted APK hashes differ by build. No exact install failure has been captured; signing mismatch, package/version conflict, device ABI/API mismatch, and damaged transfer remain unconfirmed hypotheses only.
+- Next required evidence from user: exact installer error/screenshot and phone model + Android version, plus confirmation of which artifact/APK was attempted. Preserve existing app data until update/signing compatibility is established.
