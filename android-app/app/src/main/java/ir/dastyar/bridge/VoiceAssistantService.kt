@@ -74,6 +74,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var activeOfflineTrack: AudioTrack? = null
     private var activeUntil = 0L
     @Volatile private var awaitingWakeCommand = false
+    private var wakeCommandTimeout: Runnable? = null
     // Backend conversation ID and local history ID are deliberately separate.
     private var conversationId: String? = null
     private var voiceHistoryId: String = ""
@@ -767,7 +768,13 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             Log.d(TAG, "Ignoring transcript while media playback is active; explicit wake word required")
             return
         }
-        Log.d(TAG, "Speech segment chars=" + text.length + "; wakeDetected=" + (wake != null) + "; musicActive=" + musicActive + "; activeSession=" + (SystemClock.elapsedRealtime() < activeUntil))
+        val now = SystemClock.elapsedRealtime()
+        if (awaitingWakeCommand && now >= activeUntil) {
+            awaitingWakeCommand = false
+            wakeCommandTimeout?.let { handler.removeCallbacks(it) }
+            wakeCommandTimeout = null
+        }
+        Log.d(TAG, "Speech segment chars=" + text.length + "; wakeDetected=" + (wake != null) + "; musicActive=" + musicActive + "; activeSession=" + (now < activeUntil))
         if (wake != null) {
             val command = text.substring(wake.last + 1).trim()
             // ASR may split "Raya, what time is it?" into separate final segments.
@@ -782,11 +789,22 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
             if (command.isBlank()) {
                 awaitingWakeCommand = true
+                wakeCommandTimeout?.let { handler.removeCallbacks(it) }
+                wakeCommandTimeout = Runnable {
+                    if (awaitingWakeCommand) {
+                        awaitingWakeCommand = false
+                        activeUntil = 0L
+                        Log.i(TAG, "Wake command wait expired; returning to wake-word standby")
+                        updateNotification("Wake command timed out; say Raya to try again")
+                    }
+                }.also { handler.postDelayed(it, 10_000L) }
                 setListeningCue(true)
                 updateNotification("Raya detected; listening for your command")
                 Log.i(TAG, "Wake word detected without command; waiting silently for next ASR segment")
             } else {
                 awaitingWakeCommand = false
+                wakeCommandTimeout?.let { handler.removeCallbacks(it) }
+                wakeCommandTimeout = null
                 Log.i(TAG, "Wake word and command detected in one segment; command chars=${command.length}")
                 if (!executeLocalScreenCommand(command)) sendToChat(command)
             }
@@ -794,6 +812,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
             if (awaitingWakeCommand) {
                 awaitingWakeCommand = false
+                wakeCommandTimeout?.let { handler.removeCallbacks(it) }
+                wakeCommandTimeout = null
                 Log.i(TAG, "Command received in ASR segment after wake word; chars=${text.length}")
             }
             if (!executeLocalScreenCommand(text)) sendToChat(text)
