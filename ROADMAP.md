@@ -261,4 +261,4 @@
 - [x] Keep barge-in capture active in manual mode; after interrupting TTS, route the recognized command into the active session.
 - [x] Accept short one-word interruption phrases when they are not simply part of Raya's current spoken response.
 - [x] Improve floating R touch reliability: 180 ms hold, 14 dp drag slop, immediate press scale, 1.22x hold scale, haptic feedback, and return-to-normal release animation.
-- [ ] Build/install and test on Galaxy S8; validate Persian/English recognition in quiet and noisy rooms, PTT start/release, and interruption during long TTS.
+- [x] Build/signature-verify APK 1.31 in GitHub Actions and install over 1.30 on Galaxy S8 with `adb install -r`; app data preserved. MainActivity and both foreground services are running.\r\n- [ ] Spoken acceptance still needed: validate Persian/English recognition in quiet and noisy rooms, PTT start/release, and interruption during long TTS.
