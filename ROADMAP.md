@@ -246,3 +246,10 @@
 - [ ] Verify holding/releasing R submits exactly one complete Persian/English utterance, including pauses.
 - [ ] Verify PTT press interrupts ongoing TTS, and passive barge-in interrupts within an acceptable delay.
 - [ ] Confirm the two listening cues are clearly audible at the phone's configured alarm volume.
+
+## Milestone 19 - Duplicate voice-command suppression (candidate 1.30)
+- [x] Add normalized transcript deduplication so stale repeated ASR final results cannot re-dispatch the same command during a 12-second cooldown.
+- [x] Apply the guard to normal recognition and push-to-talk final dispatch; distinct commands remain eligible immediately.
+- [x] Bump package to versionCode 31 / versionName 1.30.
+- [ ] Build/sign APK 1.30 in GitHub Actions and install over 1.29 without clearing app data.
+- [ ] Verify one spoken command triggers one action, then a different command works immediately; verify intentionally repeating the same command after cooldown works.

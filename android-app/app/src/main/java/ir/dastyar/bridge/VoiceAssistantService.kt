@@ -76,6 +76,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     @Volatile private var activeOfflineTrack: AudioTrack? = null
     private var activeUntil = 0L
     @Volatile private var awaitingWakeCommand = false
+    @Volatile private var lastDispatchedCommand = ""
+    @Volatile private var lastDispatchedCommandAt = 0L
     private var wakeCommandTimeout: Runnable? = null
     // Backend conversation ID and local history ID are deliberately separate.
     private var conversationId: String? = null
@@ -413,7 +415,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         Log.i(TAG, "Push-to-talk finalized chars=${message.length}")
         if (message.isBlank()) {
             speak("صدایی دریافت نکردم. دوباره نگه دارید و صحبت کنید.")
-        } else if (!executeLocalScreenCommand(message)) {
+        } else if (!isDuplicateCommand(message) && !executeLocalScreenCommand(message)) {
             sendToChat(message)
         }
     }
@@ -817,6 +819,19 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         return true
     }
 
+    /** Ignore stale duplicate ASR finals that can arrive again after TTS resumes listening. */
+    private fun isDuplicateCommand(raw: String): Boolean {
+        val normalized = normalize(raw)
+        if (normalized.isBlank()) return false
+        val now = SystemClock.elapsedRealtime()
+        if (normalized == lastDispatchedCommand && now - lastDispatchedCommandAt in 0L..12_000L) {
+            Log.w(TAG, "Ignoring duplicate ASR command within cooldown")
+            return true
+        }
+        lastDispatchedCommand = normalized
+        lastDispatchedCommandAt = now
+        return false
+    }
     private fun handleRecognized(raw: String) {
         if (destroyed || busy) return
         val text = normalize(raw)
@@ -826,6 +841,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             Log.d(TAG, "Push-to-talk segment queued chars=${text.length}")
             return
         }
+        if (isDuplicateCommand(text)) return
         if (quickCaptureActive) {
             handler.removeCallbacks(quickCaptureTimeout)
             quickCaptureActive = false

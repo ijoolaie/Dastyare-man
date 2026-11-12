@@ -250,3 +250,9 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Listening start/stop tones use `STREAM_ALARM`, ToneGenerator level 100, and longer durations. Actual loudness remains subject to the device alarm-volume setting.
 - Version 1.29 / versionCode 30. `git diff --check` and CI compile/build/signature verification still pending. Device ADB was disconnected during this work; no install or runtime acceptance is claimed.
 - Preserve app data, all untracked artifacts, and PR #9 (do not merge without explicit approval).
+
+## 2026-11-12 - Duplicate command loop guard 1.30
+- User reported that after installing 1.29 Raya repeatedly executed one previously recognized command and blocked new work.
+- Candidate 1.30 adds a normalized transcript fingerprint and 12-second duplicate cooldown before dispatch in regular recognition and PTT finalization. This is a defensive mitigation for stale/replayed ASR final callbacks; runtime root cause still needs device verification.
+- Bumped to versionCode 31 / versionName 1.30. Not yet built, pushed, installed, or runtime-tested.
+- ADB remains connected to Galaxy S8 (serial ce031713e36148230c). Do not clear app data or merge PR #9.
