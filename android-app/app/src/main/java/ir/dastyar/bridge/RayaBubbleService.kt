@@ -104,7 +104,7 @@ class RayaBubbleService : Service() {
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (event.rawX - downX).toInt()
                     val dy = (event.rawY - downY).toInt()
-                    if (abs(dx) > 8 || abs(dy) > 8) {
+                    if (!pttStarted && (abs(dx) > 8 || abs(dy) > 8)) {
                         dragged = true
                         holdHandler.removeCallbacks(startPttRunnable)
                     }
