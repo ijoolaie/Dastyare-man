@@ -262,3 +262,10 @@
 - [x] Accept short one-word interruption phrases when they are not simply part of Raya's current spoken response.
 - [x] Improve floating R touch reliability: 180 ms hold, 14 dp drag slop, immediate press scale, 1.22x hold scale, haptic feedback, and return-to-normal release animation.
 - [x] Build/signature-verify APK 1.31 in GitHub Actions and install over 1.30 on Galaxy S8 with `adb install -r`; app data preserved. MainActivity and both foreground services are running.\r\n- [ ] Spoken acceptance still needed: validate Persian/English recognition in quiet and noisy rooms, PTT start/release, and interruption during long TTS.
+
+
+## Milestone 21 - ASR capture tuning and app-launch fuzzy fallback (candidate 1.32)
+- Device file inspection confirmed Whisper Tiny encoder/decoder/tokens (about 102 MB) and Shenava model/tokens (about 114 MB) are present under app-private `files/asr-models`; Vosk is downloaded separately only when selected and was not present in that directory at inspection time.
+- `open_app` previously attempted fuzzy lookup only when `target` was empty; an invalid non-empty package ID returned immediately. It now tries the exact package first, then searches using `query` or the invalid target, normalizes Persian/Arabic letter variants and separators, and ranks launcher labels/package names with edit-distance fallback. `apps` listing remains available.
+- Speech gate now starts with a lower ambient floor and less aggressive threshold so quiet/initial speech is less likely to be rejected on Galaxy S8. Added bounded transcript diagnostics for comparing selected recognizers. Unknown stored ASR IDs now safely default to Whisper rather than unexpectedly selecting Vosk.
+- VersionCode 33 / versionName 1.32. Source validation and CI/device verification pending. No app data cleared; PR #9 remains open/unmerged.

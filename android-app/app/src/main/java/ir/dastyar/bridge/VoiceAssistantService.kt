@@ -132,7 +132,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         override fun onPartialResult(hypothesis: String?) {}
         override fun onResult(hypothesis: String?) {
             val text = try { JSONObject(hypothesis ?: "{}").optString("text") } catch (_: Exception) { "" }
-            Log.d(TAG, "Vosk final result chars=${text.length}")
+            Log.i(TAG, "Vosk final result chars=${text.length} text=${text.take(100)}")
             handler.post { handleRecognized(text) }
         }
         override fun onFinalResult(hypothesis: String?) {}
@@ -300,7 +300,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         private val samples = IntArray(50) // about two seconds at 40 ms per frame
         private var size = 0
         private var cursor = 0
-        private var floor = 180.0
+        private var floor = 75.0
         private var frames = 0
 
         fun isSpeech(rms: Int): Boolean {
@@ -316,7 +316,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         else floor * 0.94 + ambient * 0.06
             }
             val musicActive = isMusicPlaybackActive()
-            val threshold = maxOf(if (musicActive) 140.0 else 105.0, floor * if (musicActive) 1.28 else 1.18).coerceAtMost(5000.0)
+            val threshold = maxOf(if (musicActive) 115.0 else 80.0, floor * if (musicActive) 1.22 else 1.12).coerceAtMost(5000.0)
             if (frames % 50 == 0) Log.d(TAG, "Audio gate rms=$rms ambient=${floor.toInt()} threshold=${threshold.toInt()}")
             return rms >= threshold
         }
@@ -724,7 +724,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         handler.post {
             sherpaProcessing = false
-            Log.d(TAG, "Sherpa final result chars=${recognized.length}")
+            Log.i(TAG, "Sherpa final result model=${VoiceModel.fromId(Prefs.voiceModel(this)).id} chars=${recognized.length} text=${recognized.take(100)}")
             if (forBargeIn) {
                 if (!destroyed && speechPlaybackActive && recognized.isNotBlank()) handleBargeInRecognized(recognized)
 

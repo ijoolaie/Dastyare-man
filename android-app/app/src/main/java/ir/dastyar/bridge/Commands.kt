@@ -278,6 +278,27 @@ object Commands {
         return Pair(true, "لینک باز شد: $url")
     }
 
+    private fun normalizeAppName(value: String): String {
+        return java.text.Normalizer.normalize(value.lowercase(Locale.ROOT), java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+            .replace(0x064a.toChar(), 0x06cc.toChar()).replace(0x0649.toChar(), 0x06cc.toChar()).replace(0x0643.toChar(), 0x06a9.toChar()).replace(0x0629.toChar(), 0x0647.toChar())
+            .replace(Regex("[\u0640\u200c\u200f\\s._-]+"), "")
+            .replace(Regex("[^\\p{L}\\p{N}]"), "")
+    }
+
+    private fun appNameDistance(a: String, b: String): Int {
+        if (a.isEmpty()) return b.length
+        if (b.isEmpty()) return a.length
+        var previous = IntArray(b.length + 1) { it }
+        for (i in a.indices) {
+            val current = IntArray(b.length + 1)
+            current[0] = i + 1
+            for (j in b.indices) current[j + 1] = minOf(current[j] + 1, previous[j + 1] + 1, previous[j] + if (a[i] == b[j]) 0 else 1)
+            previous = current
+        }
+        return previous[b.length]
+    }
+
     private fun findApps(ctx: Context, query: String, limit: Int): List<Pair<String, String>> {
         val pm = ctx.packageManager
         val intent = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
@@ -288,43 +309,59 @@ object Commands {
             pm.queryIntentActivities(intent, 0)
         }
         val all = infos.mapNotNull { ri ->
-            val label = try {
-                ri.loadLabel(pm).toString()
-            } catch (e: Exception) {
-                ri.activityInfo?.packageName ?: return@mapNotNull null
-            }
+            val label = try { ri.loadLabel(pm).toString() } catch (_: Exception) { ri.activityInfo?.packageName ?: return@mapNotNull null }
             val pkg = ri.activityInfo?.packageName ?: return@mapNotNull null
             Pair(label, pkg)
         }.distinctBy { it.second }
-        val q = query.trim().lowercase()
-        return if (q.isEmpty()) all.take(limit) else all.filter { it.first.lowercase().contains(q) || it.second.lowercase().contains(q) }.take(limit)
+        val q = normalizeAppName(query)
+        if (q.isEmpty()) return all.take(limit)
+        return all.map { app ->
+            val label = normalizeAppName(app.first)
+            val packageName = normalizeAppName(app.second.substringAfterLast('.'))
+            val score = when {
+                label == q || packageName == q -> 1.0
+                label.startsWith(q) || packageName.startsWith(q) -> 0.94
+                label.contains(q) || packageName.contains(q) -> 0.88
+                q.contains(label) && label.length >= 3 -> 0.82
+                else -> {
+                    val candidate = if (label.length >= 3) label else packageName
+                    1.0 - appNameDistance(q, candidate).toDouble() / maxOf(q.length, candidate.length, 1)
+                }
+            }
+            Triple(app, score, label.length)
+        }.filter { it.second >= 0.52 }
+            .sortedWith(compareByDescending<Triple<Pair<String, String>, Double, Int>> { it.second }.thenBy { it.third })
+            .take(limit).map { it.first }
     }
 
     private fun openApp(ctx: Context, args: JSONObject): Pair<Boolean, String> {
-        var pkg = args.optString("target", args.optString("package", "")).trim()
-        if (pkg.isEmpty()) {
-            val q = args.optString("query", "").trim()
-            if (q.isNotEmpty()) {
-                val found = findApps(ctx, q, 1)
-                if (found.isEmpty()) return Pair(false, "اپی با نام «$q» پیدا نشد")
-                pkg = found[0].second
+        val target = args.optString("target", args.optString("package", "")).trim()
+        val query = args.optString("query", "").trim()
+        if (target.isNotEmpty()) {
+            val direct = ctx.packageManager.getLaunchIntentForPackage(target)
+            if (direct != null) {
+                ctx.startActivity(direct.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return Pair(true, "\u0628\u0631\u0646\u0627\u0645\u0647 \u0628\u0627 \u0634\u0646\u0627\u0633\u0647 $target \u0628\u0627\u0632 \u0634\u062f")
             }
         }
-        if (pkg.isEmpty()) return Pair(false, "پارامتر target (نام پکیج اپ) الزامی است")
-        val intent = ctx.packageManager.getLaunchIntentForPackage(pkg)
-            ?: return Pair(false, "اپ «$pkg» نصب نیست یا قابل باز شدن نیست")
-        ctx.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
-        return Pair(true, "اپ «$pkg» باز شد")
+        val search = if (query.isNotEmpty()) query else target
+        if (search.isBlank()) return Pair(false, "\u0646\u0627\u0645 \u0628\u0631\u0646\u0627\u0645\u0647 \u0628\u0631\u0627\u06cc \u062c\u0633\u062a\u200c\u0648\u062c\u0648 \u0627\u0631\u0633\u0627\u0644 \u0646\u0634\u062f\u0647 \u0627\u0633\u062a")
+        val found = findApps(ctx, search, 5)
+        if (found.isEmpty()) return Pair(false, "\u0628\u0631\u0646\u0627\u0645\u0647\u200c\u0627\u06cc \u0634\u0628\u06cc\u0647 $search \u062f\u0631 \u0628\u0631\u0646\u0627\u0645\u0647\u200c\u0647\u0627\u06cc \u0646\u0635\u0628\u200c\u0634\u062f\u0647 \u067e\u06cc\u062f\u0627 \u0646\u0634\u062f")
+        val chosen = found.first()
+        val launch = ctx.packageManager.getLaunchIntentForPackage(chosen.second)
+            ?: return Pair(false, "\u0628\u0631\u0646\u0627\u0645\u0647 ${chosen.first} \u0646\u0642\u0637\u0647 \u0648\u0631\u0648\u062f \u0642\u0627\u0628\u0644 \u0627\u062c\u0631\u0627 \u0646\u062f\u0627\u0631\u062f")
+        ctx.startActivity(launch.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        Log.i(TAG, "open_app fuzzy fallback query=$search resolved=${chosen.second} label=${chosen.first}")
+        return Pair(true, "\u0628\u0631\u0646\u0627\u0645\u0647 ${chosen.first} \u0628\u0627\u0632 \u0634\u062f")
     }
 
     private fun apps(ctx: Context, args: JSONObject): Pair<Boolean, String> {
         val limit = args.optInt("limit", 40).coerceIn(1, 100)
         val found = findApps(ctx, args.optString("query", ""), limit)
-        if (found.isEmpty()) return Pair(true, "اپی پیدا نشد")
-        return Pair(true, "${found.size} اپ:\n" + found.joinToString("\n") { "• ${it.first} (${it.second})" })
+        if (found.isEmpty()) return Pair(true, "\u0627\u067e\u06cc \u067e\u06cc\u062f\u0627 \u0646\u0634\u062f")
+        return Pair(true, "${found.size} \u0627\u067e:\n" + found.joinToString("\n") { "\u2022 ${it.first} (${it.second})" })
     }
-
-    // ── نوتیفیکیشن‌ها ────────────────────────────────────────────
 
     private fun notifications(args: JSONObject): Pair<Boolean, String> {
         if (!NotificationListener.connected) {

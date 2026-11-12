@@ -59,7 +59,7 @@ enum class VoiceModel(val id: String, val title: String) {
     SHENAVA("shenava_rizeh", "Shenava Rizeh فارسی");
 
     companion object {
-        fun fromId(id: String): VoiceModel = values().firstOrNull { it.id == id } ?: VOSK
+        fun fromId(id: String): VoiceModel = values().firstOrNull { it.id == id } ?: WHISPER
     }
 }
 
