@@ -256,3 +256,10 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Candidate 1.30 adds a normalized transcript fingerprint and 12-second duplicate cooldown before dispatch in regular recognition and PTT finalization. This is a defensive mitigation for stale/replayed ASR final callbacks; runtime root cause still needs device verification.
 - Bumped to versionCode 31 / versionName 1.30. Not yet built, pushed, installed, or runtime-tested.
 - ADB remains connected to Galaxy S8 (serial ce031713e36148230c). Do not clear app data or merge PR #9.
+
+## 2026-11-12 - Voice reliability and bubble feedback 1.31
+- User reports poor ASR, intermittent hold-to-talk activation, no barge-in while Raya speaks, and requests the floating R button scale up while held and return on release.
+- Candidate 1.31: PTT model-load callback now forces capture if PTT remains held; both capture engines use AudioSource.VOICE_RECOGNITION with 4x/min 12,800-byte buffers; adaptive speech gate lowered; Sherpa barge-in waits 300 ms of silence; short one-word barge-in candidates accepted; manual-mode barge-in capture no longer blocked and restores manual session state after TTS interruption.
+- Floating bubble: 180 ms hold threshold, drag slop 14 dp (was 8 px), subtle down-scale, 1.22x hold animation, haptic cue, and release animation back to 1.0x. Existing 44 dp base size unchanged.
+- VersionCode 32 / versionName 1.31. Not yet built, installed, or tested at runtime. Do not clear data; do not merge PR #9.
+- Note: current ASR choice remains user-configurable (Whisper Tiny / Shenava / Vosk). The recognition model itself has not been replaced in this patch; spoken accuracy still needs device tests and may require a stronger multilingual model on the S8.

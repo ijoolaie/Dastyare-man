@@ -17,6 +17,7 @@ import android.os.IBinder
 import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
+import android.view.HapticFeedbackConstants
 import android.view.MotionEvent
 import android.view.WindowManager
 import android.widget.TextView
@@ -44,7 +45,7 @@ class RayaBubbleService : Service() {
             val finalizing = intent.getBooleanExtra("ptt_finalizing", false)
             if (!intent.hasExtra("quick_capture_active") && !intent.hasExtra("ptt_active") && !intent.hasExtra("ptt_finalizing")) return
             bubble?.text = when { ptt -> "\u25CF"; finalizing || quick -> "\u2026"; else -> "R" }
-            bubble?.alpha = if (ptt || finalizing || quick) 0.72f else 1f
+            bubble?.alpha = when { ptt -> 1f; finalizing || quick -> 0.82f; else -> 1f }
         }
     }
 
@@ -98,13 +99,14 @@ class RayaBubbleService : Service() {
                     downX = event.rawX; downY = event.rawY
                     startX = lp.x; startY = lp.y; dragged = false; pttStarted = false
                     holdHandler.removeCallbacks(startPttRunnable)
-                    holdHandler.postDelayed(startPttRunnable, 220L)
+                    v.animate().scaleX(1.08f).scaleY(1.08f).setDuration(90L).start()
+                    holdHandler.postDelayed(startPttRunnable, 180L)
                     true
                 }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = (event.rawX - downX).toInt()
                     val dy = (event.rawY - downY).toInt()
-                    if (!pttStarted && (abs(dx) > 8 || abs(dy) > 8)) {
+                    if (!pttStarted && (abs(dx) > (14 * resources.displayMetrics.density).toInt() || abs(dy) > (14 * resources.displayMetrics.density).toInt())) {
                         dragged = true
                         holdHandler.removeCallbacks(startPttRunnable)
                     }
@@ -121,12 +123,14 @@ class RayaBubbleService : Service() {
                         if (pttStarted) endPushToTalk() else startQuickCapture()
                     }
                     pttStarted = false
+                    animateBubbleReleased(v)
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
                     holdHandler.removeCallbacks(startPttRunnable)
                     if (pttStarted) endPushToTalk()
                     pttStarted = false
+                    animateBubbleReleased(v)
                     true
                 }
                 else -> true
@@ -144,12 +148,20 @@ class RayaBubbleService : Service() {
             return
         }
         pttStarted = true
-        bubble?.alpha = 0.72f
+        bubble?.animate()?.cancel()
+        bubble?.animate()?.scaleX(1.22f)?.scaleY(1.22f)?.alpha(1f)?.setDuration(130L)?.start()
+        bubble?.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
         ContextCompat.startForegroundService(this,
             Intent(this, VoiceAssistantService::class.java).setAction(VoiceAssistantService.ACTION_PTT_START))
     }
 
+    private fun animateBubbleReleased(view: android.view.View?) {
+        view?.animate()?.cancel()
+        view?.animate()?.scaleX(1f)?.scaleY(1f)?.alpha(1f)?.setDuration(150L)?.start()
+    }
+
     private fun endPushToTalk() {
+        animateBubbleReleased(bubble)
         ContextCompat.startForegroundService(this,
             Intent(this, VoiceAssistantService::class.java).setAction(VoiceAssistantService.ACTION_PTT_END))
     }

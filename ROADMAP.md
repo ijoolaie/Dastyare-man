@@ -253,3 +253,12 @@
 - [x] Bump package to versionCode 31 / versionName 1.30.
 - [x] Build/signature-verify APK 1.30 in GitHub Actions and install over 1.29 with `adb install -r`; app data preserved.
 - [ ] Verify one spoken command triggers one action, then a different command works immediately; verify intentionally repeating the same command after cooldown works.
+
+## Milestone 20 - Voice capture reliability and floating-button feedback (candidate 1.31)
+- [x] Start PTT capture after a model finishes loading, including when the user holds the button during model initialization.
+- [x] Use Android's VOICE_RECOGNITION audio source and a larger capture buffer for both Vosk and Sherpa paths.
+- [x] Lower adaptive speech-gate thresholds to avoid clipping quieter/farther speech; extend Sherpa barge-in silence window to 300 ms.
+- [x] Keep barge-in capture active in manual mode; after interrupting TTS, route the recognized command into the active session.
+- [x] Accept short one-word interruption phrases when they are not simply part of Raya's current spoken response.
+- [x] Improve floating R touch reliability: 180 ms hold, 14 dp drag slop, immediate press scale, 1.22x hold scale, haptic feedback, and return-to-normal release animation.
+- [ ] Build/install and test on Galaxy S8; validate Persian/English recognition in quiet and noisy rooms, PTT start/release, and interruption during long TTS.

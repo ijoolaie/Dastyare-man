@@ -282,7 +282,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     speechService = loadedSpeech
                     offlineRecognizer = loadedOffline
                     modelLoader = null
-                    startAudioForCurrentMode(forceManual = quickCaptureActive)
+                    startAudioForCurrentMode(forceManual = quickCaptureActive || pushToTalkActive)
                     updateNotification("مدل ${selected.title} آماده است؛ بیدارباش رایا فعال است")
                 }
             } catch (e: Exception) {
@@ -316,7 +316,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         else floor * 0.94 + ambient * 0.06
             }
             val musicActive = isMusicPlaybackActive()
-            val threshold = maxOf(if (musicActive) 180.0 else 150.0, floor * if (musicActive) 1.5 else 1.3).coerceAtMost(9000.0)
+            val threshold = maxOf(if (musicActive) 140.0 else 105.0, floor * if (musicActive) 1.28 else 1.18).coerceAtMost(5000.0)
             if (frames % 50 == 0) Log.d(TAG, "Audio gate rms=$rms ambient=${floor.toInt()} threshold=${threshold.toInt()}")
             return rms >= threshold
         }
@@ -347,7 +347,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         if (wake != null || isStopCommand(text)) return true
         val words = text.split(Regex("\\s+")).filter { it.length > 1 }
-        return words.size >= 2 && text.length >= 6
+        return words.isNotEmpty() && text.length >= 3
     }
 
     private fun handleBargeInRecognized(raw: String) {
@@ -360,6 +360,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         val wake = wakeWordMatch(text, allowFuzzy = !isMusicPlaybackActive())
         val command = if (wake != null) text.substring(wake.last + 1).trim() else text
         Log.i(TAG, "Barge-in speech recognized chars=" + text.length)
+        activeUntil = now + SESSION_MS
         interruptSpeechPlayback()
         if (!isStopCommand(command) && command.isNotBlank()) {
             handler.postDelayed({ if (!destroyed && !busy) handleRecognized(text) }, 120)
@@ -464,8 +465,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         val minBuffer = AudioRecord.getMinBufferSize(16_000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (minBuffer <= 0) { updateNotification("میکروفون در دسترس نیست"); return }
         val recorder = try {
-            AudioRecord(MediaRecorder.AudioSource.MIC, 16_000, AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer * 2, 6_400))
+            AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, 16_000, AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer * 4, 12_800))
         } catch (e: Exception) { updateNotification("راه‌اندازی میکروفون ناموفق بود: ${e.message}"); return }
         if (recorder.state != AudioRecord.STATE_INITIALIZED) { recorder.release(); return }
         try {
@@ -586,8 +587,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         val minBuffer = AudioRecord.getMinBufferSize(16_000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (minBuffer <= 0) { updateNotification("میکروفون این دستگاه در دسترس نیست"); return }
         val recorder = try {
-            AudioRecord(MediaRecorder.AudioSource.MIC, 16_000, AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer * 2, 6_400))
+            AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, 16_000, AudioFormat.CHANNEL_IN_MONO,
+                AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer * 4, 12_800))
         } catch (e: Exception) { updateNotification("ساخت ضبط‌کننده صدا ناموفق بود: ${e.message}"); return }
         if (recorder.state != AudioRecord.STATE_INITIALIZED) {
             recorder.release(); updateNotification("میکروفون قابل راه‌اندازی نیست"); return
@@ -657,7 +658,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                             silenceSamples += count
                             for (i in 0 until count) utterance.add(buffer[i] / 32768.0f)
                         }
-                        if (speaking && (silenceSamples >= 2_400 || utterance.size >= 64_000)) {
+                        if (speaking && (silenceSamples >= 4_800 || utterance.size >= 64_000)) {
                             if (utterance.size >= 3_200) {
                                 val audio = FloatArray(utterance.size) { utterance[it] }
                                 sherpaProcessing = true
@@ -1222,7 +1223,6 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
     }
     private fun prepareBargeInCapture() {
-        if (ActivationMode.fromId(Prefs.activationMode(this)) == ActivationMode.MANUAL && !manualCaptureActive) return
         if (recognizer != null && !voskAudioRunning) startVoskAudio(allowDuringSpeech = true)
         else if (offlineRecognizer != null && !sherpaRunning) startSherpaAudio(allowDuringSpeech = true)
     }
@@ -1244,6 +1244,11 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         activeOfflineTrack = null
         pendingSpeech = null
         busy = false
+        if (ActivationMode.fromId(Prefs.activationMode(this)) == ActivationMode.MANUAL) {
+            manualCaptureActive = true
+            Prefs.setManualCaptureActive(this, true)
+            sendBroadcast(Intent(ACTION_STATE_CHANGED))
+        }
         abandonSpeechAudioFocus()
         try { synchronized(voskRecognizerLock) { recognizer?.reset() } } catch (_: Exception) {}
         setListeningCue(true)
