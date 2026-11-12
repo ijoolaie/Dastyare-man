@@ -242,3 +242,11 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 - Fixed a separate root cause: `ActivationMode.ALWAYS` previously bypassed wake-word parsing and sent `"Raya, ..."` verbatim to `/api/chat`, which could produce a generic greeting rather than execute the command.
 - ALWAYS mode now strips the wake word, waits silently up to 10 seconds if ASR emits it alone, and forwards the next transcript as the command. Wake-triggered turns receive a fresh voice conversation ID; ordinary always-listening utterances without a wake word still retain their existing behavior.
 - Bumped to 1.28 / versionCode 29. CI and on-device validation pending.
+
+## 2026-11-12 - Voice command execution and push-to-talk 1.29
+- User acceptance of 1.28 found three regressions: recognized speech often returned only a generic greeting instead of acting on commands; speaking over TTS did not reliably interrupt it; listening cues were too quiet. User also requested walkie-talkie behavior.
+- Candidate 1.29 changes on `fix/android-voice-barge-in-multilingual-screen`: direct raw recognized text is now sent as the `/api/chat` message (not appended after a long `Current user message:` wrapper); Vosk barge-in confirmation reduced from three to two partial-result frames; Sherpa barge-in silence window reduced from 300 ms to 150 ms and minimum speech buffer from 300 ms to 200 ms.
+- Floating `R` now preserves tap-to-capture and adds hold-to-talk: press for 220 ms to start, release to finalize/send. During hold, ASR segments are buffered across pauses; Vosk final audio is flushed on release; Sherpa finalizes the in-flight utterance and has a decode-aware fallback. Starting PTT interrupts current TTS immediately.
+- Listening start/stop tones use `STREAM_ALARM`, ToneGenerator level 100, and longer durations. Actual loudness remains subject to the device alarm-volume setting.
+- Version 1.29 / versionCode 30. `git diff --check` and CI compile/build/signature verification still pending. Device ADB was disconnected during this work; no install or runtime acceptance is claimed.
+- Preserve app data, all untracked artifacts, and PR #9 (do not merge without explicit approval).

@@ -230,3 +230,19 @@
 - [x] Keep direct always-listening command behavior when no wake word is used.
 - [ ] Build and install APK 1.28.
 - [ ] Verify `????? ???? ?????` yields one actual answer and no generic greeting loop.
+
+## Milestone 18 - Voice command routing, barge-in and push-to-talk (candidate 1.29, 2026-11-12)
+- [x] Add hold-to-talk to the floating R control: a tap retains the existing one-shot capture; holding for 220 ms starts continuous capture, and releasing submits the captured utterance.
+- [x] Keep speech segments during the hold and combine them only after release; short pauses no longer submit a partial command.
+- [x] Finalize Vosk tail audio on release and let Sherpa flush the active utterance; add a guarded fallback if no final segment arrives.
+- [x] Interrupt Raya playback immediately when push-to-talk begins, then capture the user's command.
+- [x] Reduce barge-in recognition latency for Vosk and Sherpa while preserving transcript-based speech checks.
+- [x] Send the recognized voice command as the direct `/api/chat` message instead of wrapping it in a second natural-language context sentence that can dilute the imperative.
+- [x] Raise listening cue gain to the alarm stream at maximum ToneGenerator level and lengthen both start/stop cues.
+- [x] Bump Android package to versionCode 30 / versionName 1.29.
+- [ ] Build and signature-verify APK 1.29 in GitHub Actions.
+- [ ] Install over 1.28 on Galaxy S8 without clearing app data.
+- [ ] Verify voice commands invoke the expected Bridge tool and do not fall back to generic greeting.
+- [ ] Verify holding/releasing R submits exactly one complete Persian/English utterance, including pauses.
+- [ ] Verify PTT press interrupts ongoing TTS, and passive barge-in interrupts within an acceptable delay.
+- [ ] Confirm the two listening cues are clearly audible at the phone's configured alarm volume.
