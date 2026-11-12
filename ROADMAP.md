@@ -251,5 +251,5 @@
 - [x] Add normalized transcript deduplication so stale repeated ASR final results cannot re-dispatch the same command during a 12-second cooldown.
 - [x] Apply the guard to normal recognition and push-to-talk final dispatch; distinct commands remain eligible immediately.
 - [x] Bump package to versionCode 31 / versionName 1.30.
-- [ ] Build/sign APK 1.30 in GitHub Actions and install over 1.29 without clearing app data.
+- [x] Build/signature-verify APK 1.30 in GitHub Actions and install over 1.29 with `adb install -r`; app data preserved.
 - [ ] Verify one spoken command triggers one action, then a different command works immediately; verify intentionally repeating the same command after cooldown works.
