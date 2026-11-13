@@ -295,3 +295,10 @@ Roadmap مرجع scope است؛ handoff باید در هر milestone به‌رو
 
 ## 2026-11-13 voice reliability follow-up (candidate 1.33)
 A Sherpa barge-in handoff defect was corrected in `VoiceAssistantService.kt`: speech onset interrupts TTS, and the subsequent decoded utterance is now accepted during a five-second post-interruption window instead of being discarded because playback is already inactive. The common handler retains the interrupted TTS text for echo suppression; Vosk barge-in also marks the interruption as automatic. Version bumped to 1.33 (versionCode 34). Static `git diff --check` passed. CI and real-device tests are still required. The current Windows host reports no connected ADB device; the beep-only start/listen symptom and repeated-speech symptom remain unverified and open. Do not clear app data, uninstall, reset settings, or claim microphone acceptance without a real spoken test.
+
+## 2026-11-13 — نسخه 1.34: جلوگیری از قطع صدا با نویز
+- علت گزارش‌شده در نسخه 1.33: مسیر Sherpa صرفاً با عبور انرژی میکروفون از آستانه و پس از سه فریم، پیش از تأیید ASR، پخش TTS را قطع می‌کرد؛ صدای محیط و بازتاب صدای خود دستیار نیز می‌توانست این مسیر را فعال کند.
+- اصلاح: حذف قطع فوری TTS بر اساس RMS. ضبط کوتاه ادامه می‌یابد و فقط پس از تولید متن قابل‌تشخیص توسط ASR و عبور از فیلتر `isBargeInCandidate`، صحبت رایا قطع و ورودی کاربر پردازش می‌شود.
+- Vosk همچنان از تشخیص متن/نامزد گفتار برای barge-in استفاده می‌کند.
+- نسخه برنامه به 1.34 (versionCode 35) افزایش یافت.
+- نیازمند تست واقعی روی گوشی: سکوت/صدای محیط نباید TTS را قطع کند؛ صحبت کاربر باید پس از پایان کوتاه مکث تشخیص و پاسخ قبلی قطع شود. صدای اعلان شنود باید فقط هنگام تغییر واقعی وضعیت پخش شود.

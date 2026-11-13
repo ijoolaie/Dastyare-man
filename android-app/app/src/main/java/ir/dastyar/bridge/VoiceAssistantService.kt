@@ -355,9 +355,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     private fun handleBargeInRecognized(raw: String) {
         if (destroyed) return
         val now = SystemClock.elapsedRealtime()
-        // Sherpa stops TTS as soon as speech onset is confirmed, then finishes
-        // decoding the user's utterance. Accept that result during the short
-        // post-interruption window instead of requiring TTS to still be active.
+        // Keep TTS playing until ASR confirms intelligible user speech; raw energy
+        // spikes (music, noise, or TTS echo) must never interrupt playback.
         val interruptedRecently = interruptedSpeechAt > 0L && now - interruptedSpeechAt in 0L..5_000L
         if (!speechPlaybackActive && !interruptedRecently) return
         val text = normalize(raw)
@@ -624,8 +623,6 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             val utterance = ArrayList<Float>(16_000 * 6)
             var speaking = false
             var silenceSamples = 0
-            var bargeInOnsetFrames = 0
-            var bargeInInterrupted = false
             val noiseGate = AdaptiveNoiseGate()
             var consecutiveReadErrors = 0
             var peakRms = 0
@@ -663,25 +660,10 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                             speaking = true
                             silenceSamples = 0
                             for (i in 0 until count) utterance.add(buffer[i] / 32768.0f)
-                            if (!bargeInInterrupted) {
-                                bargeInOnsetFrames++
-                                if (bargeInOnsetFrames >= 3) { // 3 x 40 ms speech frames
-                                    bargeInInterrupted = true
-                                    Log.i(TAG, "Sherpa speech onset confirmed; stopping TTS before final ASR")
-                                    handler.post {
-                                        if (!destroyed && speechPlaybackActive) {
-                                            activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
-                                            interruptSpeechPlayback(automaticBargeIn = true)
-                                        }
-                                    }
-                                }
-                            }
+
                         } else if (speaking) {
-                            bargeInOnsetFrames = 0
                             silenceSamples += count
                             for (i in 0 until count) utterance.add(buffer[i] / 32768.0f)
-                        } else {
-                            bargeInOnsetFrames = 0
                         }
                         if (speaking && (silenceSamples >= 4_800 || utterance.size >= 64_000)) {
                             if (utterance.size >= 3_200) {
@@ -712,8 +694,6 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         Thread { transcribeSherpa(audio, forPushToTalk = pushToTalkReleaseRequested) }.apply { name = "raya-sherpa-decode"; start() }
                     }
                     utterance.clear(); speaking = false; silenceSamples = 0
-                    bargeInOnsetFrames = 0
-                    bargeInInterrupted = false
                 }
             }
             try { recorder.stop() } catch (_: Exception) {}

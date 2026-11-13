@@ -299,3 +299,10 @@
 - [ ] CI build/signature verification pending.
 - [ ] Real Galaxy S8 microphone acceptance pending: wake-word activation, manual capture, repeated transcript suppression, and interrupting short/long TTS by speaking naturally.
 - [ ] Investigate the reported beep-only activation and intermittent repeated speech with fresh device logs; current host has no ADB device connected, so do not mark these symptoms fixed yet.
+
+## 2026-11-13 — نسخه 1.34: جلوگیری از قطع صدا با نویز
+- علت گزارش‌شده در نسخه 1.33: مسیر Sherpa صرفاً با عبور انرژی میکروفون از آستانه و پس از سه فریم، پیش از تأیید ASR، پخش TTS را قطع می‌کرد؛ صدای محیط و بازتاب صدای خود دستیار نیز می‌توانست این مسیر را فعال کند.
+- اصلاح: حذف قطع فوری TTS بر اساس RMS. ضبط کوتاه ادامه می‌یابد و فقط پس از تولید متن قابل‌تشخیص توسط ASR و عبور از فیلتر `isBargeInCandidate`، صحبت رایا قطع و ورودی کاربر پردازش می‌شود.
+- Vosk همچنان از تشخیص متن/نامزد گفتار برای barge-in استفاده می‌کند.
+- نسخه برنامه به 1.34 (versionCode 35) افزایش یافت.
+- نیازمند تست واقعی روی گوشی: سکوت/صدای محیط نباید TTS را قطع کند؛ صحبت کاربر باید پس از پایان کوتاه مکث تشخیص و پاسخ قبلی قطع شود. صدای اعلان شنود باید فقط هنگام تغییر واقعی وضعیت پخش شود.
