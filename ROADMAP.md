@@ -1,6 +1,6 @@
 # Roadmap — دستیار من / Raya Android
 
-آخرین به‌روزرسانی: 2026-11-11  
+آخرین به‌روزرسانی: 2026-11-13
 مبنای کار: شاخه `fix/android-voice-barge-in-multilingual-screen`، نسخه 1.16، commit مستندات `4205570`.
 
 ## اصول اجرا
@@ -10,7 +10,7 @@
 - تنظیمات نمایشی ممنوع؛ مقدار ذخیره‌شده باید در سرویس اعمال شود.
 - شنود دائمی نباید Audio Focus بگیرد یا در زمان بی‌کاری صدای رسانه را کم کند.
 - حفظ سازگاری، حریم خصوصی، فارسی/RTL و قابلیت توقف شفاف الزامی است.
-- فایل‌های untracked قدیمی (APK/ZIP/log/artifact) متعلق به کاربرند؛ پاک‌سازی یا reset ممنوع.
+- فایل‌های untracked قدیمی (APK/ZIP/log/artifact) متعلق به کاربرند؛ پاک‌سازی یا reset فقط با درخواست صریح کاربر مجاز است.
 
 ## فاز 0 — تثبیت خط مبنا و ممیزی
 - [x] ثبت branch/commit و حفظ فایل‌های untracked.
@@ -269,3 +269,10 @@
 - `open_app` previously attempted fuzzy lookup only when `target` was empty; an invalid non-empty package ID returned immediately. It now tries the exact package first, then searches using `query` or the invalid target, normalizes Persian/Arabic letter variants and separators, and ranks launcher labels/package names with edit-distance fallback. `apps` listing remains available.
 - Speech gate now starts with a lower ambient floor and less aggressive threshold so quiet/initial speech is less likely to be rejected on Galaxy S8. Added bounded transcript diagnostics for comparing selected recognizers. Unknown stored ASR IDs now safely default to Whisper rather than unexpectedly selecting Vosk.
 - VersionCode 33 / versionName 1.32. Source validation and CI/device verification pending. No app data cleared; PR #9 remains open/unmerged.
+
+## 2026-11-13 - Local workspace cleanup and early Sherpa barge-in candidate
+- At the user's explicit request, removed 112 obsolete local generated/test files across 98 filesystem items: old CI downloads, superseded APK/ZIP packages, duplicate artifacts, device XML/SSE/log captures, and old artifact directories.
+- Preserved tracked source, `.git`, the latest successful 1.32 CI artifact (run `43174077986`, APK SHA-256 `C197ADA3519D98C5`), `dastyar-app-backup.tar`, and `vosk-model-small-fa-0.42.zip`.
+- Workspace reduced from approximately 4.17 GB to 165.2 MB; approximately 4.0 GB reclaimed. 46 project files remain outside `.git`; 1,098 total files including Git metadata.
+- Candidate audio change: Sherpa now requests TTS interruption after three consecutive speech-gated 40 ms frames, then continues the same microphone capture for ASR. A short-lived echo guard ignores a transcript matching the interrupted TTS text. Wake-word session window is extended on onset so a barge-in command can be dispatched in wake-word mode.
+- Validation pending: Android SDK/Gradle are not installed locally, ADB currently reports no connected device, and this candidate has not yet passed CI or real-device spoken acceptance. Do not claim the early interruption is verified until CI and device tests pass.
