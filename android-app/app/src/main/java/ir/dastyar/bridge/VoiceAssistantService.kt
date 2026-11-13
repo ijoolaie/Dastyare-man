@@ -1313,7 +1313,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         setRequestProperty("Content-Type", "application/json; charset=utf-8")
                         setRequestProperty("Accept", "text/event-stream, application/json")
                         // Share the authenticated WebView session with native voice chat.
-                        val sessionCookie = CookieManager.getInstance().getCookie(Prefs.serverUrl(this))
+                        val sessionCookie = CookieManager.getInstance().getCookie(Prefs.serverUrl(this@VoiceAssistantService))
                         if (!sessionCookie.isNullOrBlank()) setRequestProperty("Cookie", sessionCookie)
                         Log.d(TAG, "Chat WebView session cookie present=${!sessionCookie.isNullOrBlank()}")
                     }
