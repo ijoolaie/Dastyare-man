@@ -672,6 +672,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                                 }
                             }
                         } else if (speaking) {
+                            bargeInOnsetFrames = 0
                             silenceSamples += count
                             for (i in 0 until count) utterance.add(buffer[i] / 32768.0f)
                         } else {
