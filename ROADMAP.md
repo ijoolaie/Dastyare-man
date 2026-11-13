@@ -288,3 +288,14 @@
 - Galaxy S8 (`ce031713e36148230c`, SM-G950F) reconnected. `adb install -r` returned `Success`; package remains versionName 1.32 / versionCode 33 (this patch did not bump package version). Existing app data was preserved; no uninstall or data clear was performed.
 - Launched `ir.dastyar.bridge/.MainActivity` successfully. Device log shows Raya voice notification channels (`raya_voice`, `raya_bubble`) after launch; immediate scan found no `FATAL EXCEPTION`/`AndroidRuntime` crash.
 - Still pending: spoken acceptance for barge-in latency, ASR continuation after interruption, echo/false-trigger rejection, Persian-English mixed speech, wake-word session, and stop button. Build/install/launch are verified; real speech behavior is not yet verified. PR #9 remains open and unmerged.
+
+## Milestone 13 — Sherpa barge-in transcript handoff fix (candidate 1.33, 2026-11-13)
+- [x] Confirmed a state-machine bug: Sherpa detects speech onset and interrupts TTS immediately, but its final transcript callback required `speechPlaybackActive == true`; interruption had already set it false, so the user's spoken command was discarded.
+- [x] Changed the post-interruption handoff to accept a non-empty Sherpa transcript within a bounded 5-second interruption window.
+- [x] Made the shared barge-in handler accept either active playback or a recent automatic interruption, and preserve interrupted-TTS text for echo filtering.
+- [x] Applied the same automatic-interruption metadata when Vosk detects barge-in.
+- [x] Bumped Android candidate to versionCode 34 / versionName 1.33.
+- [x] `git diff --check` passed.
+- [ ] CI build/signature verification pending.
+- [ ] Real Galaxy S8 microphone acceptance pending: wake-word activation, manual capture, repeated transcript suppression, and interrupting short/long TTS by speaking naturally.
+- [ ] Investigate the reported beep-only activation and intermittent repeated speech with fresh device logs; current host has no ADB device connected, so do not mark these symptoms fixed yet.

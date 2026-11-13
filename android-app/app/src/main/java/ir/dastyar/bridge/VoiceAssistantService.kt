@@ -353,17 +353,22 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun handleBargeInRecognized(raw: String) {
-        if (destroyed || !speechPlaybackActive) return
+        if (destroyed) return
+        val now = SystemClock.elapsedRealtime()
+        // Sherpa stops TTS as soon as speech onset is confirmed, then finishes
+        // decoding the user's utterance. Accept that result during the short
+        // post-interruption window instead of requiring TTS to still be active.
+        val interruptedRecently = interruptedSpeechAt > 0L && now - interruptedSpeechAt in 0L..5_000L
+        if (!speechPlaybackActive && !interruptedRecently) return
         val text = normalize(raw)
         if (!isBargeInCandidate(text)) return
-        val now = SystemClock.elapsedRealtime()
         if (now - lastBargeInAt < 900L) return
         lastBargeInAt = now
         val wake = wakeWordMatch(text, allowFuzzy = !isMusicPlaybackActive())
         val command = if (wake != null) text.substring(wake.last + 1).trim() else text
         Log.i(TAG, "Barge-in speech recognized chars=" + text.length)
         activeUntil = now + SESSION_MS
-        interruptSpeechPlayback()
+        if (speechPlaybackActive) interruptSpeechPlayback(automaticBargeIn = true)
         if (!isStopCommand(command) && command.isNotBlank()) {
             handler.postDelayed({ if (!destroyed && !busy) handleRecognized(text) }, 120)
         }
@@ -748,8 +753,13 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             sherpaProcessing = false
             Log.i(TAG, "Sherpa final result model=${VoiceModel.fromId(Prefs.voiceModel(this)).id} chars=${recognized.length} text=${recognized.take(100)}")
             if (forBargeIn) {
-                if (!destroyed && speechPlaybackActive && recognized.isNotBlank()) handleBargeInRecognized(recognized)
-
+                val interruptionStillFresh = interruptedSpeechAt > 0L &&
+                    SystemClock.elapsedRealtime() - interruptedSpeechAt in 0L..5_000L
+                if (!destroyed && recognized.isNotBlank() && (speechPlaybackActive || interruptionStillFresh)) {
+                    handleBargeInRecognized(recognized)
+                } else if (!destroyed && recognized.isBlank()) {
+                    Log.w(TAG, "Barge-in capture ended without a transcript")
+                }
             } else if (forPushToTalk) {
                 if (!destroyed && pushToTalkFinalizing && recognized.isNotBlank()) pushToTalkSegments.add(normalize(recognized))
                 completePushToTalk()
