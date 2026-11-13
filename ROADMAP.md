@@ -276,3 +276,8 @@
 - Workspace reduced from approximately 4.17 GB to 165.2 MB; approximately 4.0 GB reclaimed. 46 project files remain outside `.git`; 1,098 total files including Git metadata.
 - Candidate audio change: Sherpa now requests TTS interruption after three consecutive speech-gated 40 ms frames, then continues the same microphone capture for ASR. A short-lived echo guard ignores a transcript matching the interrupted TTS text. Wake-word session window is extended on onset so a barge-in command can be dispatched in wake-word mode.
 - Validation pending: Android SDK/Gradle are not installed locally, ADB currently reports no connected device, and this candidate has not yet passed CI or real-device spoken acceptance. Do not claim the early interruption is verified until CI and device tests pass.
+## 2026-11-13 - Sherpa barge-in CI build completed
+- GitHub Actions run `43367558696` completed successfully for PR #9's merge test (merge commit `b8f1dfff2421be3575797891afba523b665525c7`, containing source commit `c8782d2`). `assembleDebug` passed; APK v2 signature verification passed; artifact upload succeeded.
+- Artifact ID `14011262211`, `dastyar-bridge-debug-apk`; locally downloaded and digest-verified ZIP SHA-256 `a680de179c43efeaf9fc532ab8385bdcf93ea2977f63b6a3d930203f7a4bcfdb`.
+- Extracted APK at `artifacts/run-43367558696/app-debug.apk` (78,004,934 bytes; SHA-256 `041b77eb9a07a3556113f82badf73d06856dc5cf64a6a536fdd9ffd66c812d79`). CI signer certificate SHA-256: `4888f90cd7dc389d3aed7012595ec58efbd049860ac61eafc06d95fb96c27c9e`.
+- Local ADB check still shows no connected device. No installation or live microphone/TTS acceptance test has been performed. Do not treat build success as proof of runtime barge-in behavior.
