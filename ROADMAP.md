@@ -306,3 +306,8 @@
 - Vosk همچنان از تشخیص متن/نامزد گفتار برای barge-in استفاده می‌کند.
 - نسخه برنامه به 1.34 (versionCode 35) افزایش یافت.
 - نیازمند تست واقعی روی گوشی: سکوت/صدای محیط نباید TTS را قطع کند؛ صحبت کاربر باید پس از پایان کوتاه مکث تشخیص و پاسخ قبلی قطع شود. صدای اعلان شنود باید فقط هنگام تغییر واقعی وضعیت پخش شود.
+## 2026-11-13 - Chat HTTP 401 session forwarding (candidate 1.35)
+- Device logs confirm `/api/chat` returned HTTP 401 before any model response. A direct POST to the configured server endpoint reproduced HTTP 401 with an empty body; this does not establish provider quota exhaustion.
+- Native chat requests now forward the same-origin WebView session cookie (when present) using Android CookieManager. A boolean-only diagnostic records whether a session cookie was available; cookie contents are never logged.
+- Bumped Android version to 1.35 / versionCode 36. Requires CI build and on-device verification after signing in to the WebView session.
+- No app data, pairing token, API key, backend config, or production database was changed. PR #9 remains unmerged.

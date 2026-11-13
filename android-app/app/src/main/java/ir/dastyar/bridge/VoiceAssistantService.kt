@@ -15,6 +15,7 @@ import android.media.MediaRecorder
 import android.content.Intent
 import android.os.*
 import android.util.Log
+import android.webkit.CookieManager
 import android.speech.tts.*
 import androidx.core.app.NotificationCompat
 import org.json.*
@@ -1311,6 +1312,10 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         requestMethod = "POST"; connectTimeout = 15_000; readTimeout = 120_000; doOutput = true
                         setRequestProperty("Content-Type", "application/json; charset=utf-8")
                         setRequestProperty("Accept", "text/event-stream, application/json")
+                        // Share the authenticated WebView session with native voice chat.
+                        val sessionCookie = CookieManager.getInstance().getCookie(Prefs.serverUrl(this))
+                        if (!sessionCookie.isNullOrBlank()) setRequestProperty("Cookie", sessionCookie)
+                        Log.d(TAG, "Chat WebView session cookie present=${!sessionCookie.isNullOrBlank()}")
                     }
                     try {
                         conn.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
