@@ -422,10 +422,13 @@ class MainActivity : AppCompatActivity() {
                     CookieManager.getInstance().setCookie(
                         server,
                         "$cookie; Path=/; HttpOnly; SameSite=Lax$secure"
-                    ) {
+                    ) { accepted ->
                         CookieManager.getInstance().flush()
                         runOnUiThread {
-                            toast("ورود موفق بود و دستگاه متصل شد ✅")
+                            toast(
+                                if (accepted) "ورود موفق بود و دستگاه متصل شد ✅"
+                                else "دستگاه متصل شد؛ برای ورود به صفحه وب دوباره PIN یا رمز را وارد کن"
+                            )
                             showApp()
                         }
                     }
