@@ -50,10 +50,49 @@
                 android:textColorHint="#6B7280" />
 
             <EditText
-                android:id="@+id/etToken"
+                android:id="@+id/etUser"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="12dp"
+                android:hint="@string/hint_user"
+                android:inputType="text"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#6B7280" />
+
+            <EditText
+                android:id="@+id/etPass"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:hint="@string/hint_pass"
+                android:inputType="textPassword"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#6B7280" />
+
+            <EditText
+                android:id="@+id/etPin"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="12dp"
+                android:hint="@string/hint_pin"
+                android:inputType="numberPassword"
+                android:textColor="#FFFFFF"
+                android:textColorHint="#6B7280" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:gravity="center"
+                android:text="@string/or_manual"
+                android:textColor="#6B7280"
+                android:textSize="11sp" />
+
+            <EditText
+                android:id="@+id/etToken"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
                 android:hint="@string/hint_token"
                 android:inputType="text"
                 android:textColor="#FFFFFF"
