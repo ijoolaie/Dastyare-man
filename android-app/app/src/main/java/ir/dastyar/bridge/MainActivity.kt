@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
+import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebChromeClient
@@ -53,6 +54,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pairingView: ScrollView
     private lateinit var webView: WebView
     private lateinit var etServer: EditText
+    private lateinit var etUser: EditText
+    private lateinit var etPass: EditText
+    private lateinit var etPin: EditText
     private lateinit var etToken: EditText
     private lateinit var btnConnect: Button
     private lateinit var btnSettings: ImageButton
@@ -76,6 +80,9 @@ class MainActivity : AppCompatActivity() {
         pairingView = findViewById(R.id.pairing)
         webView = findViewById(R.id.webview)
         etServer = findViewById(R.id.etServer)
+        etUser = findViewById(R.id.etUser)
+        etPass = findViewById(R.id.etPass)
+        etPin = findViewById(R.id.etPin)
         etToken = findViewById(R.id.etToken)
         btnConnect = findViewById(R.id.btnConnect)
         btnSettings = findViewById(R.id.btnSettings)
@@ -257,17 +264,28 @@ class MainActivity : AppCompatActivity() {
     private fun connect() {
         val server = etServer.text.toString().trim().trimEnd('/')
         val token = etToken.text.toString().trim()
-        if (!server.startsWith("http")) {
-            toast("آدرس سرور باید با http شروع شود")
+        if (!server.startsWith("https://", ignoreCase = true) &&
+            !server.startsWith("http://localhost", ignoreCase = true) &&
+            !server.startsWith("http://127.0.0.1", ignoreCase = true)) {
+            toast("برای ورود امن، آدرس سرور باید HTTPS باشد")
             return
         }
-        if (token.isEmpty()) {
-            toast("توکن را از تب «دستگاه‌ها» کپی کن")
+
+        val user = etUser.text.toString().trim()
+        val pass = etPass.text.toString()
+        val pin = etPin.text.toString().trim()
+        if (user.isNotEmpty() || pass.isNotEmpty() || pin.isNotEmpty() || token.isEmpty()) {
+            if (pin.isNotEmpty() && (user.isNotEmpty() || pass.isNotEmpty())) {
+                toast("یا PIN را وارد کن یا نام‌کاربری و رمز را؛ هر دو روش را هم‌زمان وارد نکن")
+                return
+            }
+            loginAutoPair(server, user, pass, pin)
             return
         }
+
+        // سازگاری با روش قدیمی: جفت‌سازی با توکن دستی
         btnConnect.isEnabled = false
         btnConnect.text = "در حال اتصال…"
-
         Thread {
             var ok = false
             var err = ""
@@ -305,6 +323,128 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }.start()
+    }
+
+    /**
+     * ورود امن و ساخت خودکار توکن دستگاه:
+     * GET auth/status → POST auth/login (PIN یا نام‌کاربری/رمز) → POST devices/auto-pair.
+     * هیچ PIN، رمز یا نشست خامی در SharedPreferences یا لاگ ذخیره نمی‌شود.
+     */
+    private fun loginAutoPair(server: String, user: String, pass: String, pin: String) {
+        btnConnect.isEnabled = false
+        btnConnect.text = "در حال ورود و اتصال…"
+        Thread {
+            var deviceToken = ""
+            var sessionCookie: String? = null
+            var err = ""
+            try {
+                val statusConn = URL("$server/api/auth/status").openConnection() as HttpURLConnection
+                statusConn.requestMethod = "GET"
+                statusConn.connectTimeout = 15_000
+                statusConn.readTimeout = 15_000
+                statusConn.setRequestProperty("Accept", "application/json")
+                val statusCode = statusConn.responseCode
+                val statusText = (if (statusCode in 200..299) statusConn.inputStream else statusConn.errorStream)
+                    ?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() } ?: ""
+                if (statusCode !in 200..299) throw Exception("بررسی وضعیت ورود ناموفق بود (HTTP $statusCode)")
+                val authStatus = JSONObject(statusText)
+
+                if (authStatus.optBoolean("enabled", false)) {
+                    val mode = authStatus.optString("mode", "pin")
+                    val loginBody = if (mode == "password") {
+                        if (user.isBlank() || pass.isBlank()) throw Exception("نام‌کاربری و رمز عبور را وارد کن")
+                        JSONObject().put("username", user).put("password", pass)
+                    } else {
+                        if (pin.isBlank()) throw Exception("PIN ورود را وارد کن")
+                        JSONObject().put("pin", pin)
+                    }
+                    val loginConn = URL("$server/api/auth/login").openConnection() as HttpURLConnection
+                    loginConn.requestMethod = "POST"
+                    loginConn.connectTimeout = 15_000
+                    loginConn.readTimeout = 20_000
+                    loginConn.doOutput = true
+                    loginConn.instanceFollowRedirects = false
+                    loginConn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    loginConn.setRequestProperty("Accept", "application/json")
+                    loginConn.outputStream.use { it.write(loginBody.toString().toByteArray(StandardCharsets.UTF_8)) }
+                    val loginCode = loginConn.responseCode
+                    val loginText = (if (loginCode in 200..299) loginConn.inputStream else loginConn.errorStream)
+                        ?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() } ?: ""
+                    val loginResp = JSONObject(loginText)
+                    if (loginCode !in 200..299) throw Exception(loginResp.optString("error", "ورود ناموفق (HTTP $loginCode)"))
+                    sessionCookie = extractSessionCookie(loginConn)
+                    if (sessionCookie.isNullOrBlank()) throw Exception("سرور کوکی نشست نداد؛ ورود کامل نشد")
+                }
+
+                val pairBody = JSONObject()
+                    .put("os", "Android ${Build.VERSION.RELEASE} · اپ اختصاصی")
+                    .put("hostname", Build.MODEL)
+                    .put("capabilities", JSONArray(BridgeService.CAPS))
+                val pairConn = URL("$server/api/devices/auto-pair").openConnection() as HttpURLConnection
+                pairConn.requestMethod = "POST"
+                pairConn.connectTimeout = 15_000
+                pairConn.readTimeout = 20_000
+                pairConn.doOutput = true
+                pairConn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                pairConn.setRequestProperty("Accept", "application/json")
+                sessionCookie?.let { pairConn.setRequestProperty("Cookie", it) }
+                pairConn.outputStream.use { it.write(pairBody.toString().toByteArray(StandardCharsets.UTF_8)) }
+                val pairCode = pairConn.responseCode
+                val pairText = (if (pairCode in 200..299) pairConn.inputStream else pairConn.errorStream)
+                    ?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() } ?: ""
+                val pairResp = JSONObject(pairText)
+                if (pairCode !in 200..299 || !pairResp.optBoolean("ok", false)) {
+                    throw Exception(pairResp.optString("error", "جفت‌سازی ناموفق (HTTP $pairCode)"))
+                }
+                deviceToken = pairResp.optString("token", "")
+                if (deviceToken.isBlank()) throw Exception("سرور توکن دستگاه را برنگرداند")
+            } catch (e: Exception) {
+                err = e.message ?: "خطای شبکه"
+            }
+
+            runOnUiThread {
+                btnConnect.isEnabled = true
+                btnConnect.text = getString(R.string.btn_connect)
+                if (deviceToken.isBlank()) {
+                    toast("ورود/اتصال ناموفق: $err")
+                    return@runOnUiThread
+                }
+                Prefs.save(this, server, deviceToken)
+                Prefs.setVoiceEnabled(this, true)
+                val cookie = sessionCookie
+                if (cookie.isNullOrBlank()) {
+                    toast("دستگاه متصل شد ✅")
+                    showApp()
+                } else {
+                    // همان نشست را به WebView هم می‌دهیم تا صفحه وب دوباره PIN/رمز نخواهد.
+                    CookieManager.getInstance().setAcceptCookie(true)
+                    val secure = if (server.startsWith("https://", ignoreCase = true)) "; Secure" else ""
+                    CookieManager.getInstance().setCookie(
+                        server,
+                        "$cookie; Path=/; HttpOnly; SameSite=Lax$secure"
+                    ) {
+                        CookieManager.getInstance().flush()
+                        runOnUiThread {
+                            toast("ورود موفق بود و دستگاه متصل شد ✅")
+                            showApp()
+                        }
+                    }
+                }
+            }
+        }.start()
+    }
+
+    /** فقط name=value کوکی نشست را برمی‌گرداند؛ مقدار هیچ‌وقت لاگ یا در Prefs ذخیره نمی‌شود. */
+    private fun extractSessionCookie(conn: HttpURLConnection): String? {
+        for ((name, values) in conn.headerFields) {
+            if (name != null && name.equals("Set-Cookie", ignoreCase = true)) {
+                for (value in values) {
+                    val pair = value.substringBefore(';').trim()
+                    if (pair.startsWith("dastyar_session=") && pair.length > "dastyar_session=".length) return pair
+                }
+            }
+        }
+        return null
     }
 
     // Notification-listener access is user-enabled from the app settings menu.
