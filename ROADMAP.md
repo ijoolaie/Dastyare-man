@@ -311,3 +311,12 @@
 - Native chat requests now forward the same-origin WebView session cookie (when present) using Android CookieManager. A boolean-only diagnostic records whether a session cookie was available; cookie contents are never logged.
 - Bumped Android version to 1.35 / versionCode 36. Requires CI build and on-device verification after signing in to the WebView session.
 - No app data, pairing token, API key, backend config, or production database was changed. PR #9 remains unmerged.
+
+## 2026-11-14 - Secure Android auto-pair candidate 1.37
+- Added first-run auto-pair flow to the current voice-enabled Android app without replacing the existing voice, screen-control, or settings implementation.
+- APK checks `/api/auth/status`, authenticates using the configured PIN or username/password, then calls `/api/devices/auto-pair` with the authenticated session.
+- The session cookie is handed to WebView only after successful device pairing; the raw password/PIN/session is not stored in SharedPreferences or logged.
+- Added a random per-install identifier so two phones of the same model do not accidentally reuse one device record/token.
+- Bumped app to versionName 1.37 / versionCode 38. CI and real-device pairing verification are pending.
+- Backend companion package has a server-side Android capability allow-list and verifies command ownership before accepting device results. It is code-only; no deployment performed.
+- Original uploaded API archive contained live database/session/service settings and conversation history. A separate code-only reviewed archive was prepared without `.env` or `db/custom.db`; preserve the existing production database and environment during any later deployment.

@@ -307,3 +307,11 @@ A Sherpa barge-in handoff defect was corrected in `VoiceAssistantService.kt`: sp
 - Native chat requests now forward the same-origin WebView session cookie (when present) using Android CookieManager. A boolean-only diagnostic records whether a session cookie was available; cookie contents are never logged.
 - Bumped Android version to 1.35 / versionCode 36. Requires CI build and on-device verification after signing in to the WebView session.
 - No app data, pairing token, API key, backend config, or production database was changed. PR #9 remains unmerged.
+
+## 2026-11-14 - Android auto-pair integration handoff
+- Current branch: `fix/android-voice-barge-in-multilingual-screen`; PR #9 remains open and unmerged.
+- Android v1.37 adds auto-pair using `/api/auth/status`, `/api/auth/login` (PIN or password), and `/api/devices/auto-pair`. It transfers the session to WebView after pairing and uses a random per-install hostname suffix to avoid same-model device collisions.
+- The separately uploaded `android-app (2).zip` was an older source-only project (version 1.0), not an APK; it did not include the auto-pair flow or current voice features. The current APK must come from the GitHub Actions artifact.
+- API archive review found private live state in `.env` and `db/custom.db` (including active auth/session/service settings and chat history). Do not publish or deploy that original archive. A code-only reviewed archive was created excluding both files and the stale embedded Android project.
+- Backend archive changes: align Android capability allow-list with current APK; filter auto-pair capabilities server-side; require device-command ownership when accepting results. No server deployment or database mutation was performed.
+- Preserve all existing app data and pairing settings. For a pairing refresh, use the app's existing connection-change flow; do not uninstall or clear app data. Voice behavior still needs real spoken testing after install.
