@@ -28,7 +28,7 @@ class BridgeService : Service() {
         val CAPS = listOf(
             "sysinfo", "device_status", "battery", "brightness", "ringer", "vibrate", "notify", "clipboard_write", "clipboard_read",
             "open_url", "open_app", "apps", "media", "volume", "flashlight",
-            "geolocation", "sms_send", "contacts", "call", "screen", "notifications"
+            "geolocation", "sms_send", "sms_read", "contacts", "call", "screen", "notifications"
         )
     }
 
@@ -112,6 +112,7 @@ class BridgeService : Service() {
     }
 
     private class HttpResult(val code: Int, val body: String)
+    private class PairingRejectedException(message: String) : Exception(message)
 
     private fun httpPost(base: String, path: String, body: JSONObject, readTimeoutMs: Int = 30_000): HttpResult {
         val conn = (URL(base.trimEnd('/') + path).openConnection() as HttpURLConnection)
@@ -145,8 +146,9 @@ class BridgeService : Service() {
             conn.setRequestProperty("Accept", "application/json")
             val code = conn.responseCode
             if (code != 200) {
-                val err = conn.errorStream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }
-                throw IllegalStateException("poll HTTP $code: ${err?.take(200).orEmpty()}")
+                val err = conn.errorStream?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() }.orEmpty()
+                if (code in listOf(401, 403, 404) && (err.contains("\u062a\u0648\u06a9\u0646") || code != 404)) throw PairingRejectedException(err.take(200))
+                throw IllegalStateException("poll HTTP $code: ${err.take(200)}")
             }
             val payload = conn.inputStream.bufferedReader(StandardCharsets.UTF_8).use { it.readText() }
             val command = JSONObject(payload).optJSONObject("command")
@@ -220,7 +222,9 @@ class BridgeService : Service() {
                 val reg = httpPost(server, "/api/devices/register", registration)
                 val regJson = try { JSONObject(reg.body) } catch (_: Exception) { JSONObject() }
                 if (reg.code !in 200..299 || !regJson.optBoolean("ok", false)) {
-                    throw IllegalStateException("registration rejected: ${regJson.optString("error", "HTTP ${reg.code}")}")
+                    val reason = regJson.optString("error", "HTTP ${reg.code}")
+                    if (reg.code in listOf(401, 403, 404) && (reason.contains("\u062a\u0648\u06a9\u0646") || reg.code != 404)) throw PairingRejectedException(reason)
+                    throw IllegalStateException("registration rejected: $reason")
                 }
                 Log.i(TAG, "Device registered; capabilities=${CAPS.joinToString(",")}")
                 updateStatus("Connected · waiting for commands")
@@ -241,6 +245,11 @@ class BridgeService : Service() {
                     deliverResult(server, token, id, ok, result)
                     updateStatus("Connected · waiting for commands")
                 }
+            } catch (e: PairingRejectedException) {
+                Log.e(TAG, "Bridge pairing rejected; user action required: ${e.message}")
+                updateStatus("Pairing token rejected. Re-pair this device from the Devices tab.")
+                running = false
+                return
             } catch (e: InterruptedException) {
                 if (!running) return
                 Log.w(TAG, "Bridge worker interrupted")

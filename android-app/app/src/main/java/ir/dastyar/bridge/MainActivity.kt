@@ -13,6 +13,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.view.View
+import android.webkit.CookieManager
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.webkit.WebChromeClient
@@ -53,12 +54,18 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pairingView: ScrollView
     private lateinit var webView: WebView
     private lateinit var etServer: EditText
+    private lateinit var etUser: EditText
+    private lateinit var etPass: EditText
+    private lateinit var etPin: EditText
     private lateinit var etToken: EditText
     private lateinit var btnConnect: Button
     private lateinit var btnSettings: ImageButton
+    private lateinit var btnListening: Button
+    private lateinit var btnBack: TextView
 
     private val permissionReceiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == VoiceAssistantService.ACTION_STATE_CHANGED) { updateListeningButton(); return }
             val permission = intent?.getStringExtra(EXTRA_PERMISSION) ?: return
             requestPermissionIfNeeded(permission)
         }
@@ -73,13 +80,20 @@ class MainActivity : AppCompatActivity() {
         pairingView = findViewById(R.id.pairing)
         webView = findViewById(R.id.webview)
         etServer = findViewById(R.id.etServer)
+        etUser = findViewById(R.id.etUser)
+        etPass = findViewById(R.id.etPass)
+        etPin = findViewById(R.id.etPin)
         etToken = findViewById(R.id.etToken)
         btnConnect = findViewById(R.id.btnConnect)
         btnSettings = findViewById(R.id.btnSettings)
+        btnListening = findViewById(R.id.btnListening)
+        btnBack = findViewById(R.id.btnBack)
 
         etServer.setText(Prefs.serverUrl(this).ifEmpty { DEFAULT_SERVER_URL })
         btnConnect.setOnClickListener { connect() }
         btnSettings.setOnClickListener { openSettings() }
+        btnListening.setOnClickListener { toggleListening() }
+        btnBack.setOnClickListener { navigateBack() }
 
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
@@ -99,7 +113,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onStart() {
         super.onStart()
-        val filter = IntentFilter(ACTION_REQUEST_PERMISSION)
+        val filter = IntentFilter(ACTION_REQUEST_PERMISSION).apply { addAction(VoiceAssistantService.ACTION_STATE_CHANGED) }
         if (Build.VERSION.SDK_INT >= 33) {
             registerReceiver(permissionReceiver, filter, Context.RECEIVER_NOT_EXPORTED)
         } else {
@@ -115,6 +129,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onResume() {
         super.onResume()
+        updateListeningButton()
+        if (webView.visibility == View.VISIBLE) btnBack.visibility = View.VISIBLE
+        ensureFloatingButton()
         val prefs = getSharedPreferences(PERMISSION_PREFS, MODE_PRIVATE)
         val pending = prefs.getString(PENDING_PERMISSION, null) ?: return
         prefs.edit().remove(PENDING_PERMISSION).apply()
@@ -137,6 +154,7 @@ class MainActivity : AppCompatActivity() {
             if (grantResults.firstOrNull() == PackageManager.PERMISSION_GRANTED) {
                 Prefs.setVoiceEnabled(this, true)
                 ContextCompat.startForegroundService(this, Intent(this, VoiceAssistantService::class.java))
+                updateListeningButton()
                 toast("دستیار صوتی رایا فعال شد؛ بگو رایا")
             } else {
                 Prefs.setVoiceEnabled(this, false)
@@ -151,21 +169,89 @@ class MainActivity : AppCompatActivity() {
         pairingView.visibility = View.VISIBLE
         webView.visibility = View.GONE
         btnSettings.visibility = View.GONE
+        btnListening.visibility = View.GONE
+        btnBack.visibility = View.GONE
     }
 
     private fun showApp() {
         pairingView.visibility = View.GONE
         webView.visibility = View.VISIBLE
         btnSettings.visibility = View.VISIBLE
+        btnListening.visibility = View.GONE
+        btnBack.visibility = View.VISIBLE
+        btnBack.post { if (webView.visibility == View.VISIBLE) btnBack.visibility = View.VISIBLE }
+        updateListeningButton()
         ContextCompat.startForegroundService(this, Intent(this, BridgeService::class.java))
         enableVoiceAssistantIfAllowed()
+        updateListeningButton()
         webView.loadUrl(Prefs.serverUrl(this))
+        ensureFloatingButton()
     }
 
+    private fun ensureFloatingButton() {
+        if (!Prefs.isPaired(this)) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            if (!getSharedPreferences(PERMISSION_PREFS, MODE_PRIVATE).getBoolean("overlay_prompted", false)) {
+                getSharedPreferences(PERMISSION_PREFS, MODE_PRIVATE).edit().putBoolean("overlay_prompted", true).apply()
+                AlertDialog.Builder(this)
+                    .setTitle("\u062f\u06a9\u0645\u0647 \u0634\u0646\u0627\u0648\u0631 \u0631\u0627\u06cc\u0627")
+                    .setMessage("\u0628\u0631\u0627\u06cc \u0646\u0645\u0627\u06cc\u0634 \u062f\u06a9\u0645\u0647 \u062f\u0627\u06cc\u0631\u0647\u200c\u0627\u06cc \u0631\u0627\u06cc\u0627 \u0631\u0648\u06cc \u0647\u0645\u0647 \u0635\u0641\u062d\u0647\u200c\u0647\u0627\u06cc \u06af\u0648\u0634\u06cc\u060c \u0627\u062c\u0627\u0632\u0647 \u0646\u0645\u0627\u06cc\u0634 \u0631\u0648\u06cc \u0628\u0631\u0646\u0627\u0645\u0647\u200c\u0647\u0627\u06cc \u062f\u06cc\u06af\u0631 \u0631\u0627 \u0641\u0639\u0627\u0644 \u06a9\u0646.")
+                    .setNegativeButton("\u0628\u0639\u062f\u0627\u064b", null)
+                    .setPositiveButton("\u0641\u0639\u0627\u0644\u200c\u0633\u0627\u0632\u06cc") { _, _ ->
+                        try { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
+                        catch (_: Exception) { toast("\u062a\u0646\u0638\u06cc\u0645 \u0645\u062c\u0648\u0632 \u0646\u0645\u0627\u06cc\u0634 \u0634\u0646\u0627\u0648\u0631 \u062f\u0631 \u062f\u0633\u062a\u0631\u0633 \u0646\u06cc\u0633\u062a") }
+                    }.show()
+            }
+            return
+        }
+        ContextCompat.startForegroundService(this, Intent(this, RayaBubbleService::class.java))
+    }
+
+    private fun navigateBack() {
+        if (webView.visibility == View.VISIBLE) {
+            if (webView.canGoBack()) webView.goBack()
+            else webView.evaluateJavascript("if(window.history.length>1){window.history.back();}", null)
+        }
+    }
+
+    private fun updateListeningButton() {
+        if (!::btnListening.isInitialized) return
+        val enabled = Prefs.isVoiceEnabled(this)
+        val manual = ActivationMode.fromId(Prefs.activationMode(this)) == ActivationMode.MANUAL
+        val capturing = enabled && (!manual || Prefs.isManualCaptureActive(this))
+        btnListening.text = if (capturing) getString(R.string.listening_stop) else getString(R.string.listening_start)
+        btnListening.contentDescription = btnListening.text
+    }
+
+    private fun toggleListening() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1003)
+            return
+        }
+        val manual = ActivationMode.fromId(Prefs.activationMode(this)) == ActivationMode.MANUAL
+        val enabled = Prefs.isVoiceEnabled(this)
+        val action = when {
+            !enabled && manual -> VoiceAssistantService.ACTION_START_CAPTURE
+            !enabled -> null
+            manual && Prefs.isManualCaptureActive(this) -> VoiceAssistantService.ACTION_STOP_CAPTURE
+            manual -> VoiceAssistantService.ACTION_START_CAPTURE
+            else -> VoiceAssistantService.ACTION_STOP
+        }
+        if (action == VoiceAssistantService.ACTION_STOP) {
+            ContextCompat.startForegroundService(this, Intent(this, VoiceAssistantService::class.java).setAction(action))
+        } else {
+            if (action == null) Prefs.setVoiceEnabled(this, true)
+            val intent = Intent(this, VoiceAssistantService::class.java)
+            if (action != null) intent.action = action
+            ContextCompat.startForegroundService(this, intent)
+        }
+        btnListening.postDelayed({ updateListeningButton() }, 350)
+    }
     private fun enableVoiceAssistantIfAllowed() {
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED) {
-            Prefs.setVoiceEnabled(this, true)
-            ContextCompat.startForegroundService(this, Intent(this, VoiceAssistantService::class.java))
+            if (Prefs.isVoiceEnabled(this)) {
+                ContextCompat.startForegroundService(this, Intent(this, VoiceAssistantService::class.java))
+            }
         } else {
             ActivityCompat.requestPermissions(this, arrayOf(Manifest.permission.RECORD_AUDIO), 1003)
         }
@@ -178,17 +264,28 @@ class MainActivity : AppCompatActivity() {
     private fun connect() {
         val server = etServer.text.toString().trim().trimEnd('/')
         val token = etToken.text.toString().trim()
-        if (!server.startsWith("http")) {
-            toast("آدرس سرور باید با http شروع شود")
+        if (!server.startsWith("https://", ignoreCase = true) &&
+            !server.startsWith("http://localhost", ignoreCase = true) &&
+            !server.startsWith("http://127.0.0.1", ignoreCase = true)) {
+            toast("برای ورود امن، آدرس سرور باید HTTPS باشد")
             return
         }
-        if (token.isEmpty()) {
-            toast("توکن را از تب «دستگاه‌ها» کپی کن")
+
+        val user = etUser.text.toString().trim()
+        val pass = etPass.text.toString()
+        val pin = etPin.text.toString().trim()
+        if (user.isNotEmpty() || pass.isNotEmpty() || pin.isNotEmpty() || token.isEmpty()) {
+            if (pin.isNotEmpty() && (user.isNotEmpty() || pass.isNotEmpty())) {
+                toast("یا PIN را وارد کن یا نام‌کاربری و رمز را؛ هر دو روش را هم‌زمان وارد نکن")
+                return
+            }
+            loginAutoPair(server, user, pass, pin)
             return
         }
+
+        // سازگاری با روش قدیمی: جفت‌سازی با توکن دستی
         btnConnect.isEnabled = false
         btnConnect.text = "در حال اتصال…"
-
         Thread {
             var ok = false
             var err = ""
@@ -218,6 +315,7 @@ class MainActivity : AppCompatActivity() {
                 btnConnect.text = getString(R.string.btn_connect)
                 if (ok) {
                     Prefs.save(this, server, token)
+                    Prefs.setVoiceEnabled(this, true)
                     toast("متصل شد ✅")
                     showApp()
                 } else {
@@ -227,22 +325,150 @@ class MainActivity : AppCompatActivity() {
         }.start()
     }
 
+    /**
+     * ورود امن و ساخت خودکار توکن دستگاه:
+     * GET auth/status → POST auth/login (PIN یا نام‌کاربری/رمز) → POST devices/auto-pair.
+     * هیچ PIN، رمز یا نشست خامی در SharedPreferences یا لاگ ذخیره نمی‌شود.
+     */
+    private fun loginAutoPair(server: String, user: String, pass: String, pin: String) {
+        btnConnect.isEnabled = false
+        btnConnect.text = "در حال ورود و اتصال…"
+        Thread {
+            var deviceToken = ""
+            var sessionCookie: String? = null
+            var err = ""
+            try {
+                val statusConn = URL("$server/api/auth/status").openConnection() as HttpURLConnection
+                statusConn.requestMethod = "GET"
+                statusConn.connectTimeout = 15_000
+                statusConn.readTimeout = 15_000
+                statusConn.setRequestProperty("Accept", "application/json")
+                val statusCode = statusConn.responseCode
+                val statusText = (if (statusCode in 200..299) statusConn.inputStream else statusConn.errorStream)
+                    ?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() } ?: ""
+                if (statusCode !in 200..299) throw Exception("بررسی وضعیت ورود ناموفق بود (HTTP $statusCode)")
+                val authStatus = JSONObject(statusText)
+
+                if (authStatus.optBoolean("enabled", false)) {
+                    val mode = authStatus.optString("mode", "pin")
+                    val loginBody = if (mode == "password") {
+                        if (user.isBlank() || pass.isBlank()) throw Exception("نام‌کاربری و رمز عبور را وارد کن")
+                        JSONObject().put("username", user).put("password", pass)
+                    } else {
+                        if (pin.isBlank()) throw Exception("PIN ورود را وارد کن")
+                        JSONObject().put("pin", pin)
+                    }
+                    val loginConn = URL("$server/api/auth/login").openConnection() as HttpURLConnection
+                    loginConn.requestMethod = "POST"
+                    loginConn.connectTimeout = 15_000
+                    loginConn.readTimeout = 20_000
+                    loginConn.doOutput = true
+                    loginConn.instanceFollowRedirects = false
+                    loginConn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                    loginConn.setRequestProperty("Accept", "application/json")
+                    loginConn.outputStream.use { it.write(loginBody.toString().toByteArray(StandardCharsets.UTF_8)) }
+                    val loginCode = loginConn.responseCode
+                    val loginText = (if (loginCode in 200..299) loginConn.inputStream else loginConn.errorStream)
+                        ?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() } ?: ""
+                    val loginResp = JSONObject(loginText)
+                    if (loginCode !in 200..299) throw Exception(loginResp.optString("error", "ورود ناموفق (HTTP $loginCode)"))
+                    sessionCookie = extractSessionCookie(loginConn)
+                    if (sessionCookie.isNullOrBlank()) throw Exception("سرور کوکی نشست نداد؛ ورود کامل نشد")
+                }
+
+                val pairBody = JSONObject()
+                    .put("os", "Android ${Build.VERSION.RELEASE} · اپ اختصاصی")
+                    .put("hostname", "${Build.MODEL}-${Prefs.installId(this)}")
+                    .put("capabilities", JSONArray(BridgeService.CAPS))
+                val pairConn = URL("$server/api/devices/auto-pair").openConnection() as HttpURLConnection
+                pairConn.requestMethod = "POST"
+                pairConn.connectTimeout = 15_000
+                pairConn.readTimeout = 20_000
+                pairConn.doOutput = true
+                pairConn.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                pairConn.setRequestProperty("Accept", "application/json")
+                sessionCookie?.let { pairConn.setRequestProperty("Cookie", it) }
+                pairConn.outputStream.use { it.write(pairBody.toString().toByteArray(StandardCharsets.UTF_8)) }
+                val pairCode = pairConn.responseCode
+                val pairText = (if (pairCode in 200..299) pairConn.inputStream else pairConn.errorStream)
+                    ?.bufferedReader(StandardCharsets.UTF_8)?.use { it.readText() } ?: ""
+                val pairResp = JSONObject(pairText)
+                if (pairCode !in 200..299 || !pairResp.optBoolean("ok", false)) {
+                    throw Exception(pairResp.optString("error", "جفت‌سازی ناموفق (HTTP $pairCode)"))
+                }
+                deviceToken = pairResp.optString("token", "")
+                if (deviceToken.isBlank()) throw Exception("سرور توکن دستگاه را برنگرداند")
+            } catch (e: Exception) {
+                err = e.message ?: "خطای شبکه"
+            }
+
+            runOnUiThread {
+                btnConnect.isEnabled = true
+                btnConnect.text = getString(R.string.btn_connect)
+                if (deviceToken.isBlank()) {
+                    toast("ورود/اتصال ناموفق: $err")
+                    return@runOnUiThread
+                }
+                Prefs.save(this, server, deviceToken)
+                Prefs.setVoiceEnabled(this, true)
+                val cookie = sessionCookie
+                if (cookie.isNullOrBlank()) {
+                    toast("دستگاه متصل شد ✅")
+                    showApp()
+                } else {
+                    // همان نشست را به WebView هم می‌دهیم تا صفحه وب دوباره PIN/رمز نخواهد.
+                    CookieManager.getInstance().setAcceptCookie(true)
+                    val secure = if (server.startsWith("https://", ignoreCase = true)) "; Secure" else ""
+                    CookieManager.getInstance().setCookie(
+                        server,
+                        "$cookie; Path=/; HttpOnly; SameSite=Lax$secure"
+                    ) { accepted ->
+                        CookieManager.getInstance().flush()
+                        runOnUiThread {
+                            toast(
+                                if (accepted) "ورود موفق بود و دستگاه متصل شد ✅"
+                                else "دستگاه متصل شد؛ برای ورود به صفحه وب دوباره PIN یا رمز را وارد کن"
+                            )
+                            showApp()
+                        }
+                    }
+                }
+            }
+        }.start()
+    }
+
+    /** فقط name=value کوکی نشست را برمی‌گرداند؛ مقدار هیچ‌وقت لاگ یا در Prefs ذخیره نمی‌شود. */
+    private fun extractSessionCookie(conn: HttpURLConnection): String? {
+        for ((name, values) in conn.headerFields) {
+            if (name != null && name.equals("Set-Cookie", ignoreCase = true)) {
+                for (value in values) {
+                    val pair = value.substringBefore(';').trim()
+                    if (pair.startsWith("dastyar_session=") && pair.length > "dastyar_session=".length) return pair
+                }
+            }
+        }
+        return null
+    }
+
     // Notification-listener access is user-enabled from the app settings menu.
 
     // ── منوی تنظیمات ─────────────────────────────────────────────
 
     private fun openSettings() {
         val options = arrayOf(
-            "انتخاب مدل تشخیص گفتار",
-            "انتخاب صدا و موتور گفتار رایا",
-            "هویت و حافظه رایا",
-            "تاریخچه مکالمات صوتی",
-            "بهینه‌سازی باتری",
-            "تغییر اتصال یا قطع اتصال",
-            "Notification access"
+            "\u0627\u0646\u062a\u062e\u0627\u0628 \u0645\u062f\u0644 \u062a\u0634\u062e\u06cc\u0635 \u06af\u0641\u062a\u0627\u0631",
+            "\u0627\u0646\u062a\u062e\u0627\u0628 \u0635\u062f\u0627 \u0648 \u0645\u0648\u062a\u0648\u0631 \u06af\u0641\u062a\u0627\u0631 \u0631\u0627\u06cc\u0627",
+            "\u0647\u0648\u06cc\u062a \u0648 \u062d\u0627\u0641\u0638\u0647 \u0631\u0627\u06cc\u0627",
+            "\u062a\u0627\u0631\u06cc\u062e\u0686\u0647 \u0645\u06a9\u0627\u0644\u0645\u0627\u062a \u0635\u0648\u062a\u06cc",
+            "\u0628\u0647\u06cc\u0646\u0647\u200c\u0633\u0627\u0632\u06cc \u0628\u0627\u062a\u0631\u06cc",
+            "\u0641\u0639\u0627\u0644\u200c\u0633\u0627\u0632\u06cc \u06a9\u0646\u062a\u0631\u0644 \u062e\u0627\u0645\u0648\u0634/\u0631\u0648\u0634\u0646 \u0635\u0641\u062d\u0647",
+            "\u062f\u0633\u062a\u0631\u0633\u06cc \u0627\u0639\u0644\u0627\u0646\u200c\u0647\u0627",
+            "\u062a\u063a\u06cc\u06cc\u0631 \u0627\u062a\u0635\u0627\u0644 \u06cc\u0627 \u0642\u0637\u0639 \u0627\u062a\u0635\u0627\u0644",
+            "\u062d\u0627\u0644\u062a \u0641\u0639\u0627\u0644\u200c\u0633\u0627\u0632\u06cc \u0634\u0646\u0648\u062f",
+            "\u0645\u062c\u0648\u0632 \u062f\u06a9\u0645\u0647 \u0634\u0646\u0627\u0648\u0631 \u0631\u0627\u06cc\u0627"
         )
         AlertDialog.Builder(this)
-            .setTitle("تنظیمات دستیار من")
+            .setTitle("\u062a\u0646\u0638\u06cc\u0645\u0627\u062a \u062f\u0633\u062a\u06cc\u0627\u0631 \u0645\u0646")
             .setItems(options) { _, which ->
                 when (which) {
                     0 -> openVoiceModelSettings()
@@ -250,22 +476,63 @@ class MainActivity : AppCompatActivity() {
                     2 -> openMemorySettings()
                     3 -> openVoiceHistory()
                     4 -> openBatterySettings()
-                    5 -> openNotificationAccessSettings()
-                    6 -> {
-                        AlertDialog.Builder(this)
-                            .setTitle("Disconnect this device?")
-                            .setMessage("This will erase the saved server address and device token. You will need to pair the app again to reconnect.")
-                            .setNegativeButton("Cancel", null)
-                            .setPositiveButton("Disconnect") { _, _ ->
-                                stopService(Intent(this, VoiceAssistantService::class.java))
-                                stopService(Intent(this, BridgeService::class.java))
-                                Prefs.clear(this)
-                                recreate()
-                            }
-                            .show()
-                    }
+                    5 -> openScreenControlSettings()
+                    6 -> openNotificationAccessSettings()
+                    8 -> openActivationModeSettings()
+                    9 -> openFloatingButtonSettings()
+                    7 -> AlertDialog.Builder(this)
+                        .setTitle("\u0642\u0637\u0639 \u0627\u062a\u0635\u0627\u0644 \u062f\u0633\u062a\u06af\u0627\u0647\u061f")
+                        .setMessage("\u0628\u0627 \u0642\u0637\u0639 \u0627\u062a\u0635\u0627\u0644\u060c \u0646\u0634\u0627\u0646\u06cc \u0633\u0631\u0648\u0631 \u0648 \u062a\u0648\u06a9\u0646 \u0630\u062e\u06cc\u0631\u0647\u200c\u0634\u062f\u0647 \u067e\u0627\u06a9 \u0645\u06cc\u200c\u0634\u0648\u062f \u0648 \u0628\u0631\u0627\u06cc \u0627\u062a\u0635\u0627\u0644 \u062f\u0648\u0628\u0627\u0631\u0647 \u0628\u0627\u06cc\u062f \u062f\u0633\u062a\u06af\u0627\u0647 \u0631\u0627 \u062c\u0641\u062a\u200c\u0633\u0627\u0632\u06cc \u06a9\u0646\u06cc.")
+                        .setNegativeButton("\u0627\u0646\u0635\u0631\u0627\u0641", null)
+                        .setPositiveButton("\u0642\u0637\u0639 \u0627\u062a\u0635\u0627\u0644") { _, _ ->
+                            stopService(Intent(this, VoiceAssistantService::class.java))
+                            stopService(Intent(this, BridgeService::class.java))
+                            Prefs.clear(this)
+                            recreate()
+                        }
+                        .show()
                 }
             }
+            .show()
+    }
+
+    private fun openFloatingButtonSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !Settings.canDrawOverlays(this)) {
+            try { startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName"))) }
+            catch (_: Exception) { toast("\u062a\u0646\u0638\u06cc\u0645 \u0645\u062c\u0648\u0632 \u0646\u0645\u0627\u06cc\u0634 \u0634\u0646\u0627\u0648\u0631 \u062f\u0631 \u062f\u0633\u062a\u0631\u0633 \u0646\u06cc\u0633\u062a") }
+        } else {
+            ContextCompat.startForegroundService(this, Intent(this, RayaBubbleService::class.java))
+            toast("\u062f\u06a9\u0645\u0647 \u0634\u0646\u0627\u0648\u0631 \u0631\u0627\u06cc\u0627 \u0641\u0639\u0627\u0644 \u0627\u0633\u062a")
+        }
+    }
+
+    private fun openScreenControlSettings() {
+        try {
+            startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+            toast("\u062f\u0631 \u0641\u0647\u0631\u0633\u062a \u0633\u0631\u0648\u06cc\u0633\u200c\u0647\u0627\u06cc \u0646\u0635\u0628\u200c\u0634\u062f\u0647\u060c Dastyar screen control \u0631\u0627 \u067e\u06cc\u062f\u0627 \u0648 \u0641\u0639\u0627\u0644 \u06a9\u0646.")
+        } catch (_: Exception) {
+            toast("\u0628\u0627\u0632\u06a9\u0631\u062f\u0646 \u062a\u0646\u0638\u06cc\u0645\u0627\u062a \u062f\u0633\u062a\u0631\u0633\u200c\u067e\u0630\u06cc\u0631\u06cc \u0645\u0645\u06a9\u0646 \u0646\u0634\u062f\u061b \u0627\u0632 \u062a\u0646\u0638\u06cc\u0645\u0627\u062a \u06af\u0648\u0634\u06cc \u0648\u0627\u0631\u062f Accessibility \u0634\u0648.")
+        }
+    }
+    private fun openActivationModeSettings() {
+        val modes = ActivationMode.values()
+        val labels = arrayOf(
+            "\u0647\u0645\u06cc\u0634\u0647 \u06af\u0648\u0634 \u0628\u062f\u0647 (\u0628\u062f\u0648\u0646 \u06a9\u0644\u0645\u0647 \u0628\u06cc\u062f\u0627\u0631\u0628\u0627\u0634)",
+            "\u0628\u0627 \u06af\u0641\u062a\u0646 \u0631\u0627\u06cc\u0627 \u0641\u0639\u0627\u0644 \u0634\u0648",
+            "\u0641\u0642\u0637 \u0628\u0627 \u0641\u0634\u0631\u062f\u0646 \u062f\u06a9\u0645\u0647 \u0634\u0631\u0648\u0639 \u0634\u0646\u0648\u062f"
+        )
+        val selected = modes.indexOf(ActivationMode.fromId(Prefs.activationMode(this))).coerceAtLeast(0)
+        AlertDialog.Builder(this)
+            .setTitle("\u062d\u0627\u0644\u062a \u0641\u0639\u0627\u0644\u200c\u0633\u0627\u0632\u06cc \u062f\u0633\u062a\u06cc\u0627\u0631 \u0635\u0648\u062a\u06cc")
+            .setSingleChoiceItems(labels, selected) { dialog, which ->
+                val mode = modes[which]
+                Prefs.setActivationMode(this, mode.id)
+                dialog.dismiss()
+                restartVoiceService()
+                val note = if (mode == ActivationMode.MANUAL) "\u0628\u0631\u0627\u06cc \u0634\u0631\u0648\u0639 \u0634\u0646\u0648\u062f، \u062f\u06a9\u0645\u0647 \u0634\u0631\u0648\u0639 \u0631\u0627 \u062f\u0631 \u0627\u0639\u0644\u0627\u0646 \u0631\u0627\u06cc\u0627 \u0628\u0632\u0646." else "\u062d\u0627\u0644\u062a \u062c\u062f\u06cc\u062f \u0630\u062e\u06cc\u0631\u0647 \u0634\u062f."
+                toast(note)
+            }
+            .setNegativeButton("\u0627\u0646\u0635\u0631\u0627\u0641", null)
             .show()
     }
 
@@ -423,10 +690,7 @@ class MainActivity : AppCompatActivity() {
     }
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
-        if (webView.visibility == View.VISIBLE && webView.canGoBack()) {
-            webView.goBack()
-        } else {
-            super.onBackPressed()
-        }
+        if (webView.visibility == View.VISIBLE) { navigateBack(); return }
+        moveTaskToBack(true)
     }
 }

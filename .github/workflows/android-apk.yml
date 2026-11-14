@@ -1,5 +1,6 @@
 name: Android APK
 
+# Build the Android bridge on GitHub-hosted Linux runners; no local Android SDK is required.
 on:
   workflow_dispatch:
   push:

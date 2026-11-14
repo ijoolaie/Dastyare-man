@@ -15,6 +15,7 @@ import android.media.MediaRecorder
 import android.content.Intent
 import android.os.*
 import android.util.Log
+import android.webkit.CookieManager
 import android.speech.tts.*
 import androidx.core.app.NotificationCompat
 import org.json.*
@@ -38,7 +39,14 @@ import java.util.UUID
 class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     companion object {
         const val ACTION_STOP = "ir.dastyar.bridge.voice.STOP"
+        const val ACTION_INTERRUPT = "ir.dastyar.bridge.voice.INTERRUPT"
         const val ACTION_TEST_TTS = "ir.dastyar.bridge.voice.TEST_TTS"
+        const val ACTION_START_CAPTURE = "ir.dastyar.bridge.voice.START_CAPTURE"
+        const val ACTION_QUICK_CAPTURE = "ir.dastyar.bridge.voice.QUICK_CAPTURE"
+        const val ACTION_PTT_START = "ir.dastyar.bridge.voice.PTT_START"
+        const val ACTION_PTT_END = "ir.dastyar.bridge.voice.PTT_END"
+        const val ACTION_STOP_CAPTURE = "ir.dastyar.bridge.voice.STOP_CAPTURE"
+        const val ACTION_STATE_CHANGED = "ir.dastyar.bridge.voice.STATE_CHANGED"
         const val EXTRA_TTS_VOICE = "tts_voice"
         private const val CHANNEL = "raya_voice"
         private const val NOTIFICATION_ID = 43
@@ -49,6 +57,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     private val handler = Handler(Looper.getMainLooper())
     private var model: Model? = null
     private var recognizer: Recognizer? = null
+    private val voskRecognizerLock = Any()
     private var speechService: SpeechService? = null
     private var modelLoader: Thread? = null
     private var tts: TextToSpeech? = null
@@ -61,7 +70,18 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     private var toneGenerator: ToneGenerator? = null
     private var listeningCueState: Boolean? = null
     @Volatile private var busy = false
+    @Volatile private var speechPlaybackActive = false
+    @Volatile private var speechEpoch = 0L
+    @Volatile private var lastBargeInAt = 0L
+    @Volatile private var activeSpeechText = ""
+    @Volatile private var interruptedSpeechText = ""
+    @Volatile private var interruptedSpeechAt = 0L
+    @Volatile private var activeOfflineTrack: AudioTrack? = null
     private var activeUntil = 0L
+    @Volatile private var awaitingWakeCommand = false
+    @Volatile private var lastDispatchedCommand = ""
+    @Volatile private var lastDispatchedCommandAt = 0L
+    private var wakeCommandTimeout: Runnable? = null
     // Backend conversation ID and local history ID are deliberately separate.
     private var conversationId: String? = null
     private var voiceHistoryId: String = ""
@@ -77,12 +97,45 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     private var voskAudioThread: Thread? = null
     private var sherpaThread: Thread? = null
     @Volatile private var destroyed = false
+    @Volatile private var manualCaptureActive = false
+    @Volatile private var pushToTalkActive = false
+    @Volatile private var pushToTalkFinalizing = false
+    @Volatile private var pushToTalkReleaseRequested = false
+    private val pushToTalkSegments = java.util.concurrent.CopyOnWriteArrayList<String>()
+    @Volatile private var quickCaptureActive = false
+    @Volatile private var quickCaptureAwaitingReply = false
+    private val pushToTalkFinalizeFallback = object : Runnable {
+        override fun run() {
+            if (!pushToTalkFinalizing || destroyed) return
+            if (sherpaProcessing) handler.postDelayed(this, 800L)
+            else {
+                stopAudioCapture()
+                completePushToTalk()
+            }
+        }
+    }
+    private val quickCaptureTimeout = Runnable {
+        if (quickCaptureActive && !destroyed) {
+            quickCaptureActive = false
+            quickCaptureAwaitingReply = false
+            Thread {
+                stopAudioCapture()
+                handler.post {
+                    if (!destroyed) {
+                        sendBroadcast(Intent(ACTION_STATE_CHANGED).putExtra("quick_capture_active", false).setPackage(packageName))
+                        if (Prefs.isVoiceEnabled(this)) startAudioForCurrentMode()
+                        updateNotification("\u0632\u0645\u0627\u0646 \u0634\u0646\u0648\u062f \u062a\u0645\u0627\u0645 \u0634\u062f")
+                    }
+                }
+            }.apply { name = "raya-quick-capture-timeout"; start() }
+        }
+    }
 
     private val voskListener = object : RecognitionListener {
         override fun onPartialResult(hypothesis: String?) {}
         override fun onResult(hypothesis: String?) {
             val text = try { JSONObject(hypothesis ?: "{}").optString("text") } catch (_: Exception) { "" }
-            Log.d(TAG, "Vosk final result chars=${text.length}")
+            Log.i(TAG, "Vosk final result chars=${text.length} text=${text.take(100)}")
             handler.post { handleRecognized(text) }
         }
         override fun onFinalResult(hypothesis: String?) {}
@@ -97,6 +150,9 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         super.onCreate()
         Log.i(TAG, "Voice service created")
         foreground()
+        manualCaptureActive = false
+        Prefs.setManualCaptureActive(this, false)
+        sendBroadcast(Intent(ACTION_STATE_CHANGED))
         tts = TextToSpeech(this, this)
         val memory = RayaMemoryStore(this)
         conversationId = (memory.getProfile("voice_server_conversation_id").ifBlank { memory.getProfile("voice_conversation_id") }).takeIf { it.isNotBlank() }
@@ -105,15 +161,56 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             voiceHistoryId = UUID.randomUUID().toString()
             memory.setProfile("voice_local_history_id", voiceHistoryId)
         }
+        memory.close()
         loadModelAsync()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
+            Prefs.setManualCaptureActive(this, false)
+            sendBroadcast(Intent(ACTION_STATE_CHANGED))
             setListeningCue(false)
             Prefs.setVoiceEnabled(this, false)
             stopSelf()
             return START_NOT_STICKY
+        }
+        if (intent?.action == ACTION_INTERRUPT) {
+            interruptSpeechPlayback()
+            return START_STICKY
+        }
+        if (intent?.action == ACTION_PTT_START) {
+            beginPushToTalk()
+            return START_STICKY
+        }
+        if (intent?.action == ACTION_PTT_END) {
+            endPushToTalk()
+            return START_STICKY
+        }
+        if (intent?.action == ACTION_QUICK_CAPTURE) {
+            handler.removeCallbacks(quickCaptureTimeout)
+            quickCaptureActive = true
+            quickCaptureAwaitingReply = false
+            handler.postDelayed(quickCaptureTimeout, 15_000L)
+            sendBroadcast(Intent(ACTION_STATE_CHANGED).putExtra("quick_capture_active", true).setPackage(packageName))
+            if (recognizer == null && offlineRecognizer == null && modelLoader == null) loadModelAsync()
+            startAudioForCurrentMode(forceManual = true)
+            updateNotification("رایا در حال شنود فرمان است")
+            return START_STICKY
+        }
+        if (intent?.action == ACTION_START_CAPTURE) {
+            Prefs.setVoiceEnabled(this, true)
+            manualCaptureActive = true
+            Prefs.setManualCaptureActive(this, true)
+            sendBroadcast(Intent(ACTION_STATE_CHANGED))
+            if (recognizer == null && offlineRecognizer == null && modelLoader == null) loadModelAsync()
+            startAudioForCurrentMode(forceManual = true)
+            return START_STICKY
+        }
+        if (intent?.action == ACTION_STOP_CAPTURE) {
+            stopAudioCapture()
+            sendBroadcast(Intent(ACTION_STATE_CHANGED))
+            updateNotification("\u0634\u0646\u0648\u062f \u062f\u0633\u062a\u06cc \u0645\u062a\u0648\u0642\u0641 \u0634\u062f")
+            return START_STICKY
         }
         if (intent?.action == ACTION_TEST_TTS) {
             speak("سلام، من رایا هستم. این یک نمونه صدای آزمایشی است.", intent.getStringExtra(EXTRA_TTS_VOICE))
@@ -144,8 +241,8 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             tts?.setSpeechRate(1.0f)
             tts?.setOnUtteranceProgressListener(object : UtteranceProgressListener() {
                 override fun onStart(id: String?) {}
-                override fun onError(id: String?) { handler.post { resumeListening() } }
-                override fun onDone(id: String?) { handler.post { resumeListening() } }
+                override fun onError(id: String?) { id?.let { utterance -> handler.post { utterance.substringAfter("raya-", "").substringBefore("-").toLongOrNull()?.let { resumeListening(it) } } } }
+                override fun onDone(id: String?) { id?.let { utterance -> handler.post { utterance.substringAfter("raya-", "").substringBefore("-").toLongOrNull()?.let { resumeListening(it) } } } }
             })
             pendingSpeech?.let { pendingSpeech = null; speak(it) }
         } else {
@@ -189,11 +286,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     speechService = loadedSpeech
                     offlineRecognizer = loadedOffline
                     modelLoader = null
-                    if (selected == VoiceModel.VOSK) {
-                        startVoskAudio()
-                    } else {
-                        startSherpaAudio()
-                    }
+                    startAudioForCurrentMode(forceManual = quickCaptureActive || pushToTalkActive)
                     updateNotification("مدل ${selected.title} آماده است؛ بیدارباش رایا فعال است")
                 }
             } catch (e: Exception) {
@@ -207,11 +300,11 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     /** Tracks the lower energy envelope so steady music is treated as background, not speech. */
-    private class AdaptiveNoiseGate {
+    private inner class AdaptiveNoiseGate {
         private val samples = IntArray(50) // about two seconds at 40 ms per frame
         private var size = 0
         private var cursor = 0
-        private var floor = 180.0
+        private var floor = 75.0
         private var frames = 0
 
         fun isSpeech(rms: Int): Boolean {
@@ -226,63 +319,260 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 floor = if (ambient > floor) floor * 0.88 + ambient * 0.12
                         else floor * 0.94 + ambient * 0.06
             }
-            val threshold = maxOf(420.0, floor * 1.45).coerceAtMost(7000.0)
+            val musicActive = isMusicPlaybackActive()
+            val threshold = maxOf(if (musicActive) 115.0 else 80.0, floor * if (musicActive) 1.22 else 1.12).coerceAtMost(5000.0)
             if (frames % 50 == 0) Log.d(TAG, "Audio gate rms=$rms ambient=${floor.toInt()} threshold=${threshold.toInt()}")
             return rms >= threshold
         }
     }
 
-    private fun startVoskAudio() {
-        if (destroyed || busy || voskAudioRunning || recognizer == null) return
+    private fun isMusicPlaybackActive(): Boolean = try {
+        getSystemService(AudioManager::class.java).isMusicActive
+    } catch (_: Exception) {
+        false
+    }
+
+    private fun isStopCommand(raw: String): Boolean {
+        val text = normalize(raw)
+        if (text.isBlank()) return false
+        val phrases = listOf("\u062a\u0648\u0642\u0641", "\u0645\u062a\u0648\u0642\u0641 \u06a9\u0646", "\u0628\u0633 \u06a9\u0646", "\u06a9\u0627\u0641\u06cc\u0647", "\u0642\u0637\u0639 \u06a9\u0646", "\u0633\u0627\u06a9\u062a \u0634\u0648", "stop", "cancel", "pause")
+        return phrases.any { text == it || text.endsWith(" $it") }
+    }
+
+    private fun isBargeInCandidate(raw: String): Boolean {
+        val text = normalize(raw)
+        if (text.isBlank()) return false
+        val musicActive = isMusicPlaybackActive()
+        val wake = wakeWordMatch(text, allowFuzzy = !musicActive)
+        if (musicActive) return wake != null && wake.first == 0
+        if (!isStopCommand(text)) {
+            val spoken = normalize(activeSpeechText)
+            if (spoken.isNotBlank() && (spoken.contains(text) || text.contains(spoken))) return false
+        }
+        if (wake != null || isStopCommand(text)) return true
+        val words = text.split(Regex("\\s+")).filter { it.length > 1 }
+        return words.isNotEmpty() && text.length >= 3
+    }
+
+    private fun handleBargeInRecognized(raw: String) {
+        if (destroyed) return
+        val now = SystemClock.elapsedRealtime()
+        // Keep TTS playing until ASR confirms intelligible user speech; raw energy
+        // spikes (music, noise, or TTS echo) must never interrupt playback.
+        val interruptedRecently = interruptedSpeechAt > 0L && now - interruptedSpeechAt in 0L..5_000L
+        if (!speechPlaybackActive && !interruptedRecently) return
+        val text = normalize(raw)
+        if (!isBargeInCandidate(text)) return
+        if (now - lastBargeInAt < 900L) return
+        lastBargeInAt = now
+        val wake = wakeWordMatch(text, allowFuzzy = !isMusicPlaybackActive())
+        val command = if (wake != null) text.substring(wake.last + 1).trim() else text
+        Log.i(TAG, "Barge-in speech recognized chars=" + text.length)
+        activeUntil = now + SESSION_MS
+        if (speechPlaybackActive) interruptSpeechPlayback(automaticBargeIn = true)
+        if (!isStopCommand(command) && command.isNotBlank()) {
+            handler.postDelayed({ if (!destroyed && !busy) handleRecognized(text) }, 120)
+        }
+    }
+
+    private fun beginPushToTalk() {
+        if (destroyed || pushToTalkActive || pushToTalkFinalizing) return
+        if (speechPlaybackActive) interruptSpeechPlayback()
+        pushToTalkSegments.clear()
+        pushToTalkActive = true
+        pushToTalkFinalizing = false
+        pushToTalkReleaseRequested = false
+        manualCaptureActive = true
+        Prefs.setManualCaptureActive(this, true)
+        sendBroadcast(Intent(ACTION_STATE_CHANGED).putExtra("ptt_active", true).setPackage(packageName))
+        if (recognizer == null && offlineRecognizer == null && modelLoader == null) loadModelAsync()
+        startAudioForCurrentMode(forceManual = true)
+        setListeningCue(true)
+        updateNotification("در حال شنیدن؛ برای پایان صحبت دکمه را رها کنید")
+        Log.i(TAG, "Push-to-talk capture started")
+    }
+
+    private fun endPushToTalk() {
+        if (destroyed || !pushToTalkActive) return
+        pushToTalkActive = false
+        pushToTalkFinalizing = true
+        pushToTalkReleaseRequested = true
+        sendBroadcast(Intent(ACTION_STATE_CHANGED).putExtra("ptt_active", false).putExtra("ptt_finalizing", true).setPackage(packageName))
+        Log.i(TAG, "Push-to-talk released; finalizing utterance")
+        if (recognizer != null) {
+            try {
+                val tail = synchronized(voskRecognizerLock) { recognizer?.finalResult }
+                val finalText = try { JSONObject(tail ?: "{}").optString("text") } catch (_: Exception) { "" }
+                if (finalText.isNotBlank()) pushToTalkSegments.add(normalize(finalText))
+                synchronized(voskRecognizerLock) { recognizer?.reset() }
+            } catch (e: Exception) { Log.w(TAG, "Vosk PTT finalization failed: ${e.javaClass.simpleName}") }
+            stopAudioCapture()
+            handler.postDelayed({ completePushToTalk() }, 180L)
+        } else {
+            handler.postDelayed(pushToTalkFinalizeFallback, 1800L)
+        }
+    }
+
+    private fun completePushToTalk() {
+        if (!pushToTalkFinalizing || destroyed) return
+        pushToTalkFinalizing = false
+        pushToTalkReleaseRequested = false
+        stopAudioCapture()
+        val message = pushToTalkSegments.filter { it.isNotBlank() }.distinct().joinToString(" ").trim()
+        pushToTalkSegments.clear()
+        sendBroadcast(Intent(ACTION_STATE_CHANGED).putExtra("ptt_active", false).putExtra("ptt_finalizing", false).setPackage(packageName))
+        Log.i(TAG, "Push-to-talk finalized chars=${message.length}")
+        if (message.isBlank()) {
+            speak("صدایی دریافت نکردم. دوباره نگه دارید و صحبت کنید.")
+        } else if (!isDuplicateCommand(message) && !executeLocalScreenCommand(message)) {
+            sendToChat(message)
+        }
+    }
+    private fun startAudioForCurrentMode(forceManual: Boolean = false) {
+        if (destroyed) return
+        val mode = ActivationMode.fromId(Prefs.activationMode(this))
+        Log.i(TAG, "Audio mode=$mode voiceEnabled=${Prefs.isVoiceEnabled(this)} manualCapture=$manualCaptureActive forceManual=$forceManual")
+        if (mode == ActivationMode.MANUAL && !manualCaptureActive && !forceManual) {
+            setListeningCue(false)
+            updateNotification("\u062d\u0627\u0644\u062a \u062f\u0633\u062a\u06cc \u0622\u0645\u0627\u062f\u0647 \u0627\u0633\u062a\u061b \u0628\u0631\u0627\u06cc \u0634\u0646\u06cc\u062f\u0646 \u0641\u0631\u0645\u0627\u0646 \u062f\u06a9\u0645\u0647 \u0634\u0631\u0648\u0639 \u0631\u0627 \u0628\u0632\u0646\u06cc\u062f")
+            return
+        }
+        if (mode == ActivationMode.MANUAL) {
+            manualCaptureActive = true
+            Prefs.setManualCaptureActive(this, true)
+            sendBroadcast(Intent(ACTION_STATE_CHANGED))
+        }
+        if (recognizer != null) startVoskAudio(allowDuringSpeech = speechPlaybackActive)
+        else if (offlineRecognizer != null) startSherpaAudio(allowDuringSpeech = speechPlaybackActive)
+    }
+
+    private fun stopAudioCapture() {
+        manualCaptureActive = false
+        Prefs.setManualCaptureActive(this, false)
+        sendBroadcast(Intent(ACTION_STATE_CHANGED))
+        if (offlineRecognizer != null) stopSherpaAudio()
+        if (recognizer != null) {
+            voskAudioRunning = false
+            val recorder = audioRecord
+            audioRecord = null
+            try { recorder?.stop() } catch (_: Exception) {}
+            val thread = voskAudioThread
+            if (thread != null && thread !== Thread.currentThread()) {
+                try { thread.join(900) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+            }
+            voskAudioThread = null
+            try { echoCanceler?.release() } catch (_: Exception) {}; echoCanceler = null
+            try { noiseSuppressor?.release() } catch (_: Exception) {}; noiseSuppressor = null
+            try { automaticGainControl?.release() } catch (_: Exception) {}; automaticGainControl = null
+        }
+        setListeningCue(false)
+    }
+
+    private fun startVoskAudio(allowDuringSpeech: Boolean = false) {
+        if (destroyed || (busy && !allowDuringSpeech) || voskAudioRunning || recognizer == null) return
         val minBuffer = AudioRecord.getMinBufferSize(16_000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (minBuffer <= 0) { updateNotification("میکروفون در دسترس نیست"); return }
         val recorder = try {
             AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, 16_000, AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer * 2, 6_400))
+                AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer * 4, 12_800))
         } catch (e: Exception) { updateNotification("راه‌اندازی میکروفون ناموفق بود: ${e.message}"); return }
         if (recorder.state != AudioRecord.STATE_INITIALIZED) { recorder.release(); return }
         try {
             if (AcousticEchoCanceler.isAvailable()) echoCanceler = AcousticEchoCanceler.create(recorder.audioSessionId)?.apply { enabled = true }
             if (NoiseSuppressor.isAvailable()) noiseSuppressor = NoiseSuppressor.create(recorder.audioSessionId)?.apply { enabled = true }
-            if (AutomaticGainControl.isAvailable()) automaticGainControl = AutomaticGainControl.create(recorder.audioSessionId)?.apply { enabled = true }
+            // AGC disabled intentionally: it can amplify music and trigger false speech gates.
             Log.i(TAG, "Vosk audio effects: AEC=${echoCanceler?.enabled == true}, NS=${noiseSuppressor?.enabled == true}, AGC=${automaticGainControl?.enabled == true}")
         } catch (e: Exception) { Log.w(TAG, "Vosk audio preprocessing unavailable: ${e.javaClass.simpleName}") }
         try { recorder.startRecording() } catch (e: Exception) { recorder.release(); return }
+        if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+            Log.e(TAG, "Vosk microphone did not enter RECORDING state")
+            recorder.release()
+            updateNotification("Microphone did not start recording")
+            return
+        }
+        Log.i(TAG, "Vosk microphone recording session=${recorder.audioSessionId} source=MIC sampleRate=16000")
         audioRecord = recorder
         voskAudioRunning = true
-        setListeningCue(true)
+        setListeningCue(!speechPlaybackActive)
         voskAudioThread = Thread {
             val buffer = ShortArray(640)
             val silence = ShortArray(640)
             val noiseGate = AdaptiveNoiseGate()
-            var listeningDuckRequested = false
+            var bargeInFrames = 0
+            var consecutiveReadErrors = 0
+            var peakRms = 0
+            var meterFrames = 0
             while (voskAudioRunning && !destroyed) {
-                val count = try { recorder.read(buffer, 0, buffer.size) } catch (_: Exception) { -1 }
-                if (count <= 0) { if (voskAudioRunning) Thread.sleep(50); continue }
-                if (busy) continue
+                val count = try { recorder.read(buffer, 0, buffer.size) } catch (e: Exception) { Log.e(TAG, "Vosk microphone read exception: ${e.javaClass.simpleName}"); -1 }
+                if (count < 0) {
+                    consecutiveReadErrors++
+                    if (consecutiveReadErrors == 1) Log.w(TAG, "Vosk microphone read error=$count")
+                    if (consecutiveReadErrors >= 5) {
+                        Log.e(TAG, "Vosk microphone lost; restarting capture")
+                        voskAudioRunning = false
+                        handler.postDelayed({ if (!destroyed && (!busy || speechPlaybackActive)) restartVoskListening() }, 400)
+                        break
+                    }
+                    Thread.sleep(80)
+                    continue
+                }
+                if (count == 0) continue
+                consecutiveReadErrors = 0
                 var energy = 0.0
                 for (i in 0 until count) energy += buffer[i].toDouble() * buffer[i].toDouble()
                 val rms = kotlin.math.sqrt(energy / count).toInt()
-                val speechFrame = noiseGate.isSpeech(rms)
-                if (speechFrame && !listeningDuckRequested) {
-                    listeningDuckRequested = true
-                    handler.post { if (!destroyed) requestSpeechAudioFocus() }
+                peakRms = maxOf(peakRms, rms)
+                meterFrames++
+                if (meterFrames >= 50) {
+                    Log.d(TAG, "Microphone meter peakRms=$peakRms lastRms=$rms source=MIC")
+                    peakRms = 0
+                    meterFrames = 0
                 }
+                if (busy) {
+                    if (speechPlaybackActive) {
+                        try {
+                            val active = recognizer ?: continue
+                            val speechFrame = noiseGate.isSpeech(rms)
+                            val input = if (speechFrame) buffer else silence
+                            val candidate = synchronized(voskRecognizerLock) {
+                                val completed = active.acceptWaveForm(input, count)
+                                val hypothesis = if (completed) active.result else active.partialResult
+                                try {
+                                    val json = JSONObject(hypothesis ?: "{}")
+                                    json.optString(if (completed) "text" else "partial")
+                                } catch (_: Exception) { "" }
+                            }
+                            if (isBargeInCandidate(candidate)) {
+                                bargeInFrames++
+                                if (bargeInFrames >= 2) {
+                                    bargeInFrames = 0
+                                    handler.post { handleBargeInRecognized(candidate) }
+                                }
+                            } else {
+                                bargeInFrames = 0
+                            }
+                        } catch (e: Exception) {
+                            Log.w(TAG, "Vosk barge-in decode unavailable: " + e.javaClass.simpleName)
+                            bargeInFrames = 0
+                        }
+                    } else {
+                        bargeInFrames = 0
+                    }
+                    continue
+                }
+                bargeInFrames = 0
+                val speechFrame = noiseGate.isSpeech(rms)
+
                 try {
                     val active = recognizer ?: break
-                    val completed = if (speechFrame) {
-                        active.acceptWaveForm(buffer, count)
-                    } else {
-                        active.acceptWaveForm(silence, count)
+                    val recognized = synchronized(voskRecognizerLock) {
+                        val completed = if (speechFrame) active.acceptWaveForm(buffer, count)
+                        else active.acceptWaveForm(silence, count)
+                        if (completed) try { JSONObject(active.result).optString("text") } catch (_: Exception) { "" }
+                        else ""
                     }
-                    if (completed) {
-                        val text = try { JSONObject(active.result).optString("text") } catch (_: Exception) { "" }
-                        if (text.isNotBlank()) {
-                            handler.post { if (!destroyed && !busy) handleRecognized(text) }
-                        } else if (listeningDuckRequested) {
-                            handler.post { if (!destroyed && !busy) abandonSpeechAudioFocus() }
-                        }
-                        listeningDuckRequested = false
+                    if (recognized.isNotBlank()) {
+                        handler.post { if (!destroyed && !busy) handleRecognized(recognized) }
                     }
                 } catch (e: Exception) { Log.e(TAG, "Vosk audio decode failed: ${e.javaClass.simpleName}"); break }
             }
@@ -300,13 +590,13 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
     }
 
-    private fun startSherpaAudio() {
-        if (destroyed || busy || sherpaRunning || offlineRecognizer == null) return
+    private fun startSherpaAudio(allowDuringSpeech: Boolean = false) {
+        if (destroyed || (busy && !allowDuringSpeech) || sherpaRunning || offlineRecognizer == null) return
         val minBuffer = AudioRecord.getMinBufferSize(16_000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         if (minBuffer <= 0) { updateNotification("میکروفون این دستگاه در دسترس نیست"); return }
         val recorder = try {
             AudioRecord(MediaRecorder.AudioSource.VOICE_RECOGNITION, 16_000, AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer * 2, 6_400))
+                AudioFormat.ENCODING_PCM_16BIT, maxOf(minBuffer * 4, 12_800))
         } catch (e: Exception) { updateNotification("ساخت ضبط‌کننده صدا ناموفق بود: ${e.message}"); return }
         if (recorder.state != AudioRecord.STATE_INITIALIZED) {
             recorder.release(); updateNotification("میکروفون قابل راه‌اندازی نیست"); return
@@ -314,34 +604,84 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         try {
             if (AcousticEchoCanceler.isAvailable()) echoCanceler = AcousticEchoCanceler.create(recorder.audioSessionId)?.apply { enabled = true }
             if (NoiseSuppressor.isAvailable()) noiseSuppressor = NoiseSuppressor.create(recorder.audioSessionId)?.apply { enabled = true }
-            if (AutomaticGainControl.isAvailable()) automaticGainControl = AutomaticGainControl.create(recorder.audioSessionId)?.apply { enabled = true }
+            // AGC disabled intentionally: it can amplify music and trigger false speech gates.
             Log.i(TAG, "Sherpa audio effects: AEC=${echoCanceler?.enabled == true}, NS=${noiseSuppressor?.enabled == true}, AGC=${automaticGainControl?.enabled == true}")
         } catch (e: Exception) { Log.w(TAG, "Audio preprocessing unavailable: ${e.javaClass.simpleName}") }
         try { recorder.startRecording() } catch (e: Exception) {
             recorder.release(); updateNotification("شروع ضبط صدا ناموفق بود: ${e.message}"); return
         }
+        if (recorder.recordingState != AudioRecord.RECORDSTATE_RECORDING) {
+            Log.e(TAG, "Sherpa microphone did not enter RECORDING state")
+            recorder.release()
+            updateNotification("Microphone did not start recording")
+            return
+        }
+        Log.i(TAG, "Sherpa microphone recording session=${recorder.audioSessionId} source=MIC sampleRate=16000")
         audioRecord = recorder
         sherpaRunning = true
-        setListeningCue(true)
+        setListeningCue(!speechPlaybackActive)
         sherpaThread = Thread {
             val buffer = ShortArray(640)
             val utterance = ArrayList<Float>(16_000 * 6)
             var speaking = false
             var silenceSamples = 0
-            var listeningDuckRequested = false
             val noiseGate = AdaptiveNoiseGate()
+            var consecutiveReadErrors = 0
+            var peakRms = 0
+            var meterFrames = 0
             while (sherpaRunning && !destroyed) {
-                val count = try { recorder.read(buffer, 0, buffer.size) } catch (_: Exception) { -1 }
-                if (count <= 0) { if (sherpaRunning) Thread.sleep(80); continue }
-                if (busy || sherpaProcessing) { utterance.clear(); speaking = false; silenceSamples = 0; continue }
+                val count = try { recorder.read(buffer, 0, buffer.size) } catch (e: Exception) { Log.e(TAG, "Sherpa microphone read exception: ${e.javaClass.simpleName}"); -1 }
+                if (count < 0) {
+                    consecutiveReadErrors++
+                    if (consecutiveReadErrors == 1) Log.w(TAG, "Sherpa microphone read error=$count")
+                    if (consecutiveReadErrors >= 5) {
+                        Log.e(TAG, "Sherpa microphone lost; restarting capture")
+                        sherpaRunning = false
+                        handler.postDelayed({ if (!destroyed && (!busy || speechPlaybackActive)) { stopSherpaAudio(); startSherpaAudio(allowDuringSpeech = speechPlaybackActive) } }, 400)
+                        break
+                    }
+                    Thread.sleep(100)
+                    continue
+                }
+                if (count == 0) continue
+                consecutiveReadErrors = 0
+                if (sherpaProcessing) { utterance.clear(); speaking = false; silenceSamples = 0; continue }
                 var energy = 0.0
                 for (i in 0 until count) energy += buffer[i].toDouble() * buffer[i].toDouble()
                 val rms = kotlin.math.sqrt(energy / count).toInt()
-                if (noiseGate.isSpeech(rms)) {
-                    if (!speaking && !listeningDuckRequested) {
-                        listeningDuckRequested = true
-                        handler.post { if (!destroyed) requestSpeechAudioFocus() }
+                peakRms = maxOf(peakRms, rms)
+                meterFrames++
+                if (meterFrames >= 50) {
+                    Log.d(TAG, "Microphone meter peakRms=$peakRms lastRms=$rms source=MIC")
+                    peakRms = 0
+                    meterFrames = 0
+                }
+                if (busy) {
+                    if (speechPlaybackActive && !sherpaProcessing) {
+                        if (noiseGate.isSpeech(rms)) {
+                            speaking = true
+                            silenceSamples = 0
+                            for (i in 0 until count) utterance.add(buffer[i] / 32768.0f)
+
+                        } else if (speaking) {
+                            silenceSamples += count
+                            for (i in 0 until count) utterance.add(buffer[i] / 32768.0f)
+                        }
+                        if (speaking && (silenceSamples >= 4_800 || utterance.size >= 64_000)) {
+                            if (utterance.size >= 3_200) {
+                                val audio = FloatArray(utterance.size) { utterance[it] }
+                                sherpaProcessing = true
+                                Thread { transcribeSherpa(audio, forBargeIn = true) }
+                                    .apply { name = "raya-sherpa-barge-in"; start() }
+                            }
+                            utterance.clear(); speaking = false; silenceSamples = 0
+                        }
+                    } else {
+                        utterance.clear(); speaking = false; silenceSamples = 0
                     }
+                    continue
+                }
+                if (noiseGate.isSpeech(rms)) {
                     speaking = true
                     silenceSamples = 0
                     for (i in 0 until count) utterance.add(buffer[i] / 32768.0f)
@@ -349,11 +689,11 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     silenceSamples += count
                     for (i in 0 until count) utterance.add(buffer[i] / 32768.0f)
                 }
-                if (speaking && (silenceSamples >= 12_800 || utterance.size >= 128_000)) {
-                    if (utterance.size >= 4_800 && !sherpaProcessing) {
+                if (speaking && (silenceSamples >= 12_800 || utterance.size >= 128_000 || (pushToTalkReleaseRequested && utterance.size >= 3_200))) {
+                    if (utterance.size >= 3_200 && !sherpaProcessing) {
                         val audio = FloatArray(utterance.size) { utterance[it] }
                         sherpaProcessing = true
-                        Thread { transcribeSherpa(audio) }.apply { name = "raya-sherpa-decode"; start() }
+                        Thread { transcribeSherpa(audio, forPushToTalk = pushToTalkReleaseRequested) }.apply { name = "raya-sherpa-decode"; start() }
                     }
                     utterance.clear(); speaking = false; silenceSamples = 0
                 }
@@ -378,7 +718,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         sherpaThread = null
     }
-    private fun transcribeSherpa(samples: FloatArray) {
+    private fun transcribeSherpa(samples: FloatArray, forBargeIn: Boolean = false, forPushToTalk: Boolean = false) {
         var recognized = ""
         try {
             val active = offlineRecognizer ?: throw IllegalStateException("موتور تشخیص صدا آماده نیست")
@@ -393,28 +733,73 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }
         handler.post {
             sherpaProcessing = false
-            Log.d(TAG, "Sherpa final result chars=${recognized.length}")
-            if (!destroyed && !busy && recognized.isNotBlank()) handleRecognized(recognized)
+            Log.i(TAG, "Sherpa final result model=${VoiceModel.fromId(Prefs.voiceModel(this)).id} chars=${recognized.length} text=${recognized.take(100)}")
+            if (forBargeIn) {
+                val interruptionStillFresh = interruptedSpeechAt > 0L &&
+                    SystemClock.elapsedRealtime() - interruptedSpeechAt in 0L..5_000L
+                if (!destroyed && recognized.isNotBlank() && (speechPlaybackActive || interruptionStillFresh)) {
+                    handleBargeInRecognized(recognized)
+                } else if (!destroyed && recognized.isBlank()) {
+                    Log.w(TAG, "Barge-in capture ended without a transcript")
+                }
+            } else if (forPushToTalk) {
+                if (!destroyed && pushToTalkFinalizing && recognized.isNotBlank()) pushToTalkSegments.add(normalize(recognized))
+                completePushToTalk()
+            } else if (!destroyed && !busy && recognized.isNotBlank()) handleRecognized(recognized)
             else if (!destroyed && !busy) abandonSpeechAudioFocus()
         }
     }
     private fun normalize(s: String): String = s
         .replace('\u064A', '\u06CC')
+        .replace('\u0649', '\u06CC')
         .replace('\u0643', '\u06A9')
-        .replace('\u200C', ' ')
+        .replace("\u0640", "")
+        .replace(Regex("[\\u200B-\\u200F\\uFEFF]"), " ")
         .replace(Regex("[\\u064B-\\u065F\\u0670]"), "")
         .replace(Regex("[\\u060C\\u061B\\u061F,.!?;:]+"), " ")
         .replace(Regex("\\s+"), " ")
         .trim()
+        .lowercase(java.util.Locale.ROOT)
 
-    private fun wakeWordMatch(text: String): IntRange? {
-        val target = "\u0631\u0627\u06cc\u0627" // ????
-        val tokens = Regex("[\\p{L}\\p{N}]+")
-        for (match in tokens.findAll(text)) {
+    private fun wakeWordMatch(text: String, allowFuzzy: Boolean = true): IntRange? {
+        val target = "\u0631\u0627\u06cc\u0627" // raya
+        val aliases = setOf(target, target + "\u0647", target + "\u06cc", "raya", "raia")
+        val tokenRegex = Regex("[\\p{L}\\p{N}]+")
+        val matches = tokenRegex.findAll(text).toList()
+        for (match in matches) {
             val token = match.value
-            if (token == target || token == target + "\u0647") return match.range
-            // ASR can attach a short clitic or one extra character to the wake word.
-            if (token.length in 4..6 && editDistanceAtMostOne(token, target)) return match.range
+            if (token in aliases) return match.range
+            if (allowFuzzy && token.length in 4..6 && editDistanceAtMostOne(token, target)) return match.range
+            if (allowFuzzy && token.length in 4..5 && (editDistanceAtMostOne(token, "raya") || editDistanceAtMostOne(token, "raia"))) return match.range
+        }
+
+        // Persian ASR can insert spaces inside a short wake word (e.g. "رای ا").
+        // Keep offsets into the original transcript so command extraction remains correct.
+        val compact = StringBuilder()
+        val sourceOffsets = ArrayList<Int>()
+        text.forEachIndexed { index, char ->
+            if (!char.isWhitespace()) {
+                compact.append(char)
+                sourceOffsets.add(index)
+            }
+        }
+        val compactText = compact.toString()
+        val lengths = if (allowFuzzy) 3..5 else 4..4
+        for (length in lengths) {
+            if (compactText.length < length) continue
+            for (start in 0..(compactText.length - length)) {
+                val firstOffset = sourceOffsets[start]
+                val lastOffset = sourceOffsets[start + length - 1]
+                val startsAtBoundary = firstOffset == 0 || text[firstOffset - 1].isWhitespace()
+                val endsAtBoundary = lastOffset == text.lastIndex || text[lastOffset + 1].isWhitespace()
+                if (!startsAtBoundary || !endsAtBoundary) continue
+
+                val candidate = compactText.substring(start, start + length)
+                val exact = candidate in aliases
+                val fuzzy = allowFuzzy && (editDistanceAtMostOne(candidate, target) ||
+                    (candidate.length in 4..5 && (editDistanceAtMostOne(candidate, "raya") || editDistanceAtMostOne(candidate, "raia"))))
+                if (exact || fuzzy) return firstOffset..lastOffset
+            }
         }
         return null
     }
@@ -432,24 +817,178 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         return edits <= 1
     }
 
+
+    /** Execute simple screen power commands locally; this is an Android API action, never a shell command. */
+    private fun executeLocalScreenCommand(raw: String): Boolean {
+        val text = normalize(raw)
+        val mentionsScreen = listOf("\u0635\u0641\u062d\u0647", "\u0646\u0645\u0627\u06cc\u0634\u06af\u0631", "screen", "display").any { text.contains(it) } ||
+            (text.contains("\u06af\u0648\u0634\u06cc") && text.contains("\u0642\u0641\u0644"))
+        if (!mentionsScreen) return false
+        val wantsOff = listOf("\u062e\u0627\u0645\u0648\u0634", "\u0642\u0641\u0644", "screen off", "turn off", "switch off", "lock screen").any { text.contains(it) }
+        val wantsOn = listOf("\u0631\u0648\u0634\u0646", "\u0628\u06cc\u062f\u0627\u0631", "screen on", "turn on", "wake screen", "display on").any { text.contains(it) }
+        if (!wantsOff && !wantsOn) return false
+        val state = if (wantsOff) "off" else "on"
+        val (ok, message) = Commands.execute(this, "screen", JSONObject().put("state", state))
+        Log.i(TAG, "Local Android screen command state=$state ok=$ok accessibility=${ScreenControlAccessibilityService.isActive()}")
+        speak(message)
+        return true
+    }
+
+    /** Ignore stale duplicate ASR finals that can arrive again after TTS resumes listening. */
+    private fun isDuplicateCommand(raw: String): Boolean {
+        val normalized = normalize(raw)
+        if (normalized.isBlank()) return false
+        val now = SystemClock.elapsedRealtime()
+        if (normalized == lastDispatchedCommand && now - lastDispatchedCommandAt in 0L..12_000L) {
+            Log.w(TAG, "Ignoring duplicate ASR command within cooldown")
+            return true
+        }
+        lastDispatchedCommand = normalized
+        lastDispatchedCommandAt = now
+        return false
+    }
     private fun handleRecognized(raw: String) {
         if (destroyed || busy) return
         val text = normalize(raw)
         if (text.isBlank()) return
-        val wake = wakeWordMatch(text)
-        Log.d(TAG, "Speech segment chars=${text.length}; wakeDetected=${wake != null}; activeSession=${SystemClock.elapsedRealtime() < activeUntil}")
+        val echoReference = normalize(interruptedSpeechText)
+        if (interruptedSpeechAt > 0L && SystemClock.elapsedRealtime() - interruptedSpeechAt <= 5_000L &&
+            text.length >= 8 && !isStopCommand(text) && echoReference.isNotBlank() && echoReference.contains(text)) {
+            Log.i(TAG, "Ignoring ASR text matching interrupted TTS echo")
+            interruptedSpeechText = ""
+            interruptedSpeechAt = 0L
+            return
+        }
+        if (interruptedSpeechText.isNotBlank()) {
+            interruptedSpeechText = ""
+            interruptedSpeechAt = 0L
+        }
+        if (pushToTalkActive || pushToTalkFinalizing) {
+            pushToTalkSegments.add(text)
+            Log.d(TAG, "Push-to-talk segment queued chars=${text.length}")
+            return
+        }
+        if (isDuplicateCommand(text)) return
+        if (quickCaptureActive) {
+            handler.removeCallbacks(quickCaptureTimeout)
+            quickCaptureActive = false
+            quickCaptureAwaitingReply = true
+            stopAudioCapture()
+            sendBroadcast(Intent(ACTION_STATE_CHANGED).putExtra("quick_capture_active", false).setPackage(packageName))
+            Log.i(TAG, "Floating Raya button captured one command")
+            if (!executeLocalScreenCommand(text)) sendToChat(text)
+            return
+        }
+        val mode = ActivationMode.fromId(Prefs.activationMode(this))
+        if (mode == ActivationMode.MANUAL) {
+            if (!manualCaptureActive) return
+            stopAudioCapture()
+            if (!executeLocalScreenCommand(text)) sendToChat(text)
+            return
+        }
+        val musicActive = isMusicPlaybackActive()
+        if (mode == ActivationMode.ALWAYS) {
+            // ALWAYS mode used to bypass wake-word parsing entirely. That meant
+            // "Raya, what time is it?" was sent verbatim and often got a generic
+            // greeting instead of the actual command. Strip the wake word here too.
+            val alwaysWake = wakeWordMatch(text, allowFuzzy = !musicActive)
+            val now = SystemClock.elapsedRealtime()
+            if (alwaysWake != null) {
+                val command = text.substring(alwaysWake.last + 1).trim()
+                if (!awaitingWakeCommand) {
+                    voiceHistoryId = UUID.randomUUID().toString()
+                    RayaMemoryStore(this).also { it.setProfile("voice_local_history_id", voiceHistoryId) }.close()
+                    conversationId = null
+                    RayaMemoryStore(this).also { it.setProfile("voice_server_conversation_id", "") }.close()
+                }
+                activeUntil = now + SESSION_MS
+                if (command.isBlank()) {
+                    awaitingWakeCommand = true
+                    wakeCommandTimeout?.let { handler.removeCallbacks(it) }
+                    wakeCommandTimeout = Runnable {
+                        if (awaitingWakeCommand) {
+                            awaitingWakeCommand = false
+                            activeUntil = 0L
+                            Log.i(TAG, "ALWAYS-mode wake command wait expired")
+                            updateNotification("Wake command timed out; say Raya to try again")
+                        }
+                    }.also { handler.postDelayed(it, 10_000L) }
+                    setListeningCue(true)
+                    updateNotification("Raya detected; listening for your command")
+                    Log.i(TAG, "ALWAYS mode: wake word detected without command; waiting silently")
+                } else {
+                    awaitingWakeCommand = false
+                    wakeCommandTimeout?.let { handler.removeCallbacks(it) }
+                    wakeCommandTimeout = null
+                    Log.i(TAG, "ALWAYS mode: stripped wake word; command chars=${command.length}")
+                    if (!executeLocalScreenCommand(command)) sendToChat(command)
+                }
+            } else if (awaitingWakeCommand && now < activeUntil) {
+                awaitingWakeCommand = false
+                wakeCommandTimeout?.let { handler.removeCallbacks(it) }
+                wakeCommandTimeout = null
+                activeUntil = now + SESSION_MS
+                Log.i(TAG, "ALWAYS mode: command received after standalone wake word; chars=${text.length}")
+                if (!executeLocalScreenCommand(text)) sendToChat(text)
+            } else {
+                if (!executeLocalScreenCommand(text)) sendToChat(text)
+            }
+            return
+        }
+        val wake = wakeWordMatch(text, allowFuzzy = !musicActive)
+        if (musicActive && (wake == null || wake.first != 0)) {
+            Log.d(TAG, "Ignoring transcript while media playback is active; explicit wake word required")
+            return
+        }
+        val now = SystemClock.elapsedRealtime()
+        if (awaitingWakeCommand && now >= activeUntil) {
+            awaitingWakeCommand = false
+            wakeCommandTimeout?.let { handler.removeCallbacks(it) }
+            wakeCommandTimeout = null
+        }
+        Log.d(TAG, "Speech segment chars=" + text.length + "; wakeDetected=" + (wake != null) + "; musicActive=" + musicActive + "; activeSession=" + (now < activeUntil))
         if (wake != null) {
-            // A new wake word starts a fresh local and server-side voice conversation.
-            voiceHistoryId = UUID.randomUUID().toString()
-            RayaMemoryStore(this).setProfile("voice_local_history_id", voiceHistoryId)
-            conversationId = null
-            RayaMemoryStore(this).setProfile("voice_server_conversation_id", "")
-            activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
             val command = text.substring(wake.last + 1).trim()
-            if (command.isBlank()) speak("بله، چه کاری می‌توانم انجام دهم؟") else sendToChat(command)
+            // ASR may split "Raya, what time is it?" into separate final segments.
+            // Never speak a generic greeting here: it leaks back into the mic and
+            // can retrigger the wake word continuously.
+            if (!awaitingWakeCommand) {
+                voiceHistoryId = UUID.randomUUID().toString()
+                RayaMemoryStore(this).also { it.setProfile("voice_local_history_id", voiceHistoryId) }.close()
+                conversationId = null
+                RayaMemoryStore(this).also { it.setProfile("voice_server_conversation_id", "") }.close()
+            }
+            activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
+            if (command.isBlank()) {
+                awaitingWakeCommand = true
+                wakeCommandTimeout?.let { handler.removeCallbacks(it) }
+                wakeCommandTimeout = Runnable {
+                    if (awaitingWakeCommand) {
+                        awaitingWakeCommand = false
+                        activeUntil = 0L
+                        Log.i(TAG, "Wake command wait expired; returning to wake-word standby")
+                        updateNotification("Wake command timed out; say Raya to try again")
+                    }
+                }.also { handler.postDelayed(it, 10_000L) }
+                setListeningCue(true)
+                updateNotification("Raya detected; listening for your command")
+                Log.i(TAG, "Wake word detected without command; waiting silently for next ASR segment")
+            } else {
+                awaitingWakeCommand = false
+                wakeCommandTimeout?.let { handler.removeCallbacks(it) }
+                wakeCommandTimeout = null
+                Log.i(TAG, "Wake word and command detected in one segment; command chars=${command.length}")
+                if (!executeLocalScreenCommand(command)) sendToChat(command)
+            }
         } else if (SystemClock.elapsedRealtime() < activeUntil) {
             activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
-            sendToChat(text)
+            if (awaitingWakeCommand) {
+                awaitingWakeCommand = false
+                wakeCommandTimeout?.let { handler.removeCallbacks(it) }
+                wakeCommandTimeout = null
+                Log.i(TAG, "Command received in ASR segment after wake word; chars=${text.length}")
+            }
+            if (!executeLocalScreenCommand(text)) sendToChat(text)
         }
     }
     private fun loadOfflineTtsAsync() {
@@ -496,20 +1035,23 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun playOfflineSpeech(text: String) {
+        val playbackEpoch = speechEpoch
         requestSpeechAudioFocus()
         setListeningCue(false)
         val clean = text.replace(Regex("https?://\\S+"), " ")
             .replace(Regex("[#*_>|]"), " ").replace(Regex("\\s+"), " ").trim().take(3500)
         if (clean.isBlank()) { resumeListening(); return }
+        activeSpeechText = clean
         busy = true
         speechService?.setPause(true)
-        if (offlineRecognizer != null) stopSherpaAudio()
+        prepareBargeInCapture()
         updateNotification("رایا در حال پاسخ‌گویی صوتی است")
         Thread {
             var track: AudioTrack? = null
             try {
                 val engine = offlineTts ?: throw IllegalStateException("Offline Persian TTS is not ready")
                 val audio = engine.generateWithConfig(clean, GenerationConfig(sid = 0, speed = 1.0f, silenceScale = 0.2f))
+                if (destroyed || !speechPlaybackActive || speechEpoch != playbackEpoch) return@Thread
                 val samples = audio.samples
                 val sampleRate = audio.sampleRate
                 if (samples.isEmpty() || sampleRate <= 0) throw IllegalStateException("TTS returned empty audio")
@@ -522,6 +1064,10 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         .setSampleRate(sampleRate).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
                     .setBufferSizeInBytes(maxOf(minBuffer, 8192))
                     .setTransferMode(AudioTrack.MODE_STREAM).build()
+                if (destroyed || !speechPlaybackActive || speechEpoch != playbackEpoch) { track.release(); return@Thread }
+                activeOfflineTrack = track
+                track.setVolume(1.0f)
+                Log.i(TAG, "Offline TTS output trackState=${track.state} volume=1.0 stream=ASSISTANT sampleRate=$sampleRate samples=${samples.size}")
                 track.play()
                 val pcm = ShortArray(4096)
                 var offset = 0
@@ -540,16 +1086,22 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 Log.e(TAG, "Offline Persian TTS playback failed: ${e.javaClass.simpleName}")
             } finally {
                 try { track?.release() } catch (_: Exception) {}
-                handler.post { if (!destroyed) resumeListening() }
+                if (activeOfflineTrack === track) activeOfflineTrack = null
+                handler.post { if (!destroyed && speechPlaybackActive && speechEpoch == playbackEpoch) resumeListening(playbackEpoch) }
             }
         }.apply { name = "raya-persian-tts-playback"; start() }
     }
 
     private fun speak(text: String, voiceOverride: String? = null) {
         if (text.isBlank()) { resumeListening(); return }
+        speechPlaybackActive = true
+        speechEpoch++
         val clean = text.replace(Regex("https?://\\S+"), " ")
             .replace(Regex("[#*_>|]"), " ").replace(Regex("\\s+"), " ").trim().take(3500)
         if (clean.isBlank()) { resumeListening(); return }
+        activeSpeechText = clean
+        interruptedSpeechText = ""
+        interruptedSpeechAt = 0L
         requestSpeechAudioFocus()
         setListeningCue(false)
         when (TtsVoice.fromId(voiceOverride ?: Prefs.ttsVoice(this))) {
@@ -562,7 +1114,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 else {
                     busy = true
                     speechService?.setPause(true)
-                    if (offlineRecognizer != null) stopSherpaAudio()
+                    prepareBargeInCapture()
                     pendingSpeech = clean
                     updateNotification("در حال آماده‌سازی صدای آفلاین")
                     loadOfflineTtsAsync()
@@ -573,14 +1125,15 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 if (ttsReady) {
                     busy = true
                     speechService?.setPause(true)
-                    if (offlineRecognizer != null) stopSherpaAudio()
+                    prepareBargeInCapture()
                     updateNotification("رایا در حال پاسخ‌گویی است")
-                    if (tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, UUID.randomUUID().toString()) == TextToSpeech.ERROR)
+                    if (tts?.speak(clean, TextToSpeech.QUEUE_FLUSH, null, ("raya-$speechEpoch-${UUID.randomUUID()}")) == TextToSpeech.ERROR)
                         fallbackToOffline(clean)
                 } else if (offlineTts != null) {
                     playOfflineSpeech(clean)
                 } else {
                     busy = true
+                    prepareBargeInCapture()
                     pendingSpeech = clean
                     loadOfflineTtsAsync()
                     updateNotification("صدای فارسی گوشی موجود نیست؛ آماده‌سازی صدای آفلاین")
@@ -591,19 +1144,21 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
     }
 
     private fun playEdgeSpeech(text: String, voice: String) {
+        val playbackEpoch = speechEpoch
         Log.i(TAG, "Edge TTS requested voice=$voice chars=${text.length}")
         busy = true
         speechService?.setPause(true)
-        if (offlineRecognizer != null) stopSherpaAudio()
+        prepareBargeInCapture()
         updateNotification("در حال دریافت صدای طبیعی فارسی از Microsoft Edge")
         Thread {
             try {
                 val audio = EdgeTtsClient.synthesize(text, voice)
+                if (destroyed || !speechPlaybackActive || speechEpoch != playbackEpoch) return@Thread
                 Log.i(TAG, "Edge TTS synthesis succeeded voice=$voice bytes=${audio.size}")
                 val file = File(cacheDir, "raya-edge-${UUID.randomUUID()}.mp3")
                 file.writeBytes(audio)
                 handler.post {
-                    if (destroyed) { file.delete(); return@post }
+                    if (destroyed || !speechPlaybackActive || speechEpoch != playbackEpoch) { file.delete(); return@post }
                     try {
                         edgeAudioFile = file
                         val player = MediaPlayer()
@@ -613,8 +1168,16 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                                 .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
                         )
                         player.setDataSource(file.absolutePath)
+                        player.setVolume(1.0f, 1.0f)
                         player.setOnPreparedListener {
+                            if (!speechPlaybackActive || speechEpoch != playbackEpoch) {
+                                try { it.release() } catch (_: Exception) {}
+                                if (edgePlayer === it) edgePlayer = null
+                                file.delete()
+                                return@setOnPreparedListener
+                            }
                             updateNotification("رایا در حال صحبت است")
+                            Log.i(TAG, "Edge TTS output starting volume=1.0 route=ASSISTANT")
                             it.start()
                         }
                         player.setOnCompletionListener {
@@ -622,27 +1185,28 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                             edgePlayer = null
                             file.delete()
                             edgeAudioFile = null
-                            resumeListening()
+                            resumeListening(playbackEpoch)
                         }
                         player.setOnErrorListener { _, what, extra ->
                             Log.e(TAG, "Edge audio playback failed what=$what extra=$extra")
-                            fallbackToOffline(text)
+                            fallbackToOffline(text, playbackEpoch)
                             true
                         }
                         player.prepareAsync()
                     } catch (e: Exception) {
                         Log.e(TAG, "Edge audio player setup failed: ${e.javaClass.simpleName}")
-                        fallbackToOffline(text)
+                        fallbackToOffline(text, playbackEpoch)
                     }
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Edge TTS unavailable; using offline fallback (${e.javaClass.simpleName})")
-                handler.post { if (!destroyed) fallbackToOffline(text) }
+                handler.post { if (!destroyed) fallbackToOffline(text, playbackEpoch) }
             }
         }.apply { name = "raya-edge-tts"; start() }
     }
 
-    private fun fallbackToOffline(text: String) {
+    private fun fallbackToOffline(text: String, playbackEpoch: Long = speechEpoch) {
+        if (!speechPlaybackActive || speechEpoch != playbackEpoch) return
         try { edgePlayer?.release() } catch (_: Exception) {}
         edgePlayer = null
         try { edgeAudioFile?.delete() } catch (_: Exception) {}
@@ -654,29 +1218,16 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             busy = true
             pendingSpeech = text
             speechService?.setPause(true)
-            if (offlineRecognizer != null) stopSherpaAudio()
+            prepareBargeInCapture()
             loadOfflineTtsAsync()
         }
     }
 
     private fun requestSpeechAudioFocus() {
-        if (speechAudioFocusRequest != null) return
-        if (Build.VERSION.SDK_INT < 26) return
-        try {
-            val manager = getSystemService(AudioManager::class.java)
-            val request = android.media.AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK)
-                .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_ASSISTANT)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-                .setAcceptsDelayedFocusGain(false)
-                .setOnAudioFocusChangeListener { change ->
-                    if (change == AudioManager.AUDIOFOCUS_LOSS) Log.w(TAG, "Speech audio focus lost")
-                }.build()
-            val result = manager.requestAudioFocus(request)
-            if (result == AudioManager.AUDIOFOCUS_REQUEST_GRANTED) speechAudioFocusRequest = request
-            Log.d(TAG, "Speech audio focus result=$result")
-        } catch (e: Exception) { Log.w(TAG, "Speech audio focus unavailable: ${e.javaClass.simpleName}") }
+        // Intentionally do not request AUDIOFOCUS_GAIN_TRANSIENT_MAY_DUCK.
+        // Raya is mixed with media; an assistant reply must not lower the music volume.
+        Log.d(TAG, "Audio focus request skipped: media mixing policy")
     }
-
     private fun abandonSpeechAudioFocus() {
         if (Build.VERSION.SDK_INT < 26) return
         val request = speechAudioFocusRequest ?: return
@@ -691,14 +1242,54 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         if (wasListening == null && !listening) return
         if (destroyed && listening) return
         try {
-            val generator = toneGenerator ?: ToneGenerator(AudioManager.STREAM_NOTIFICATION, 72)
+            val generator = toneGenerator ?: ToneGenerator(AudioManager.STREAM_ALARM, 100)
                 .also { toneGenerator = it }
             val tone = if (listening) ToneGenerator.TONE_PROP_ACK else ToneGenerator.TONE_PROP_NACK
-            generator.startTone(tone, if (listening) 115 else 180)
+            generator.startTone(tone, if (listening) 240 else 300)
         } catch (e: Exception) {
             Log.w(TAG, "Listening cue unavailable: ${e.javaClass.simpleName}")
         }
     }
+    private fun prepareBargeInCapture() {
+        if (recognizer != null && !voskAudioRunning) startVoskAudio(allowDuringSpeech = true)
+        else if (offlineRecognizer != null && !sherpaRunning) startSherpaAudio(allowDuringSpeech = true)
+    }
+
+    /** Stop current speech immediately when the user starts speaking over it. */
+    private fun interruptSpeechPlayback(automaticBargeIn: Boolean = false) {
+        if (destroyed || !speechPlaybackActive) return
+        Log.i(TAG, "Barge-in detected; interrupting TTS playback")
+        if (automaticBargeIn) {
+            interruptedSpeechText = activeSpeechText
+            interruptedSpeechAt = SystemClock.elapsedRealtime()
+        } else {
+            interruptedSpeechText = ""
+            interruptedSpeechAt = 0L
+        }
+        speechPlaybackActive = false
+        activeSpeechText = ""
+        speechEpoch++
+        try { tts?.stop() } catch (_: Exception) {}
+        try { edgePlayer?.stop() } catch (_: Exception) {}
+        try { edgePlayer?.release() } catch (_: Exception) {}
+        edgePlayer = null
+        try { edgeAudioFile?.delete() } catch (_: Exception) {}
+        edgeAudioFile = null
+        try { activeOfflineTrack?.pause(); activeOfflineTrack?.flush(); activeOfflineTrack?.stop(); activeOfflineTrack?.release() } catch (_: Exception) {}
+        activeOfflineTrack = null
+        pendingSpeech = null
+        busy = false
+        if (ActivationMode.fromId(Prefs.activationMode(this)) == ActivationMode.MANUAL) {
+            manualCaptureActive = true
+            Prefs.setManualCaptureActive(this, true)
+            sendBroadcast(Intent(ACTION_STATE_CHANGED))
+        }
+        abandonSpeechAudioFocus()
+        try { synchronized(voskRecognizerLock) { recognizer?.reset() } } catch (_: Exception) {}
+        setListeningCue(true)
+        updateNotification("Speech interrupted; listening")
+    }
+
     private fun sendToChat(message: String) {
         if (busy) return
         setListeningCue(false)
@@ -707,27 +1298,36 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         if (offlineRecognizer != null) stopSherpaAudio()
         updateNotification("در حال ارسال درخواست به رایا")
         Thread {
+            val requestStartedAt = SystemClock.elapsedRealtime()
+            Log.i(TAG, "Chat request started chars=${message.length}")
             var answer = ""
             var failure: String? = null
+            var failureStage = "create_memory_store"
             val memory = RayaMemoryStore(this)
             try {
+                failureStage = "save_user_turn"
                 memory.addTurn(voiceHistoryId, "user", message)
-                val previousTurns = memory.turnsForConversation(voiceHistoryId, 4).dropLast(1).joinToString(" | ") { "${it.role}: ${it.content.take(260)}" }
-                val context = memory.personaContext(message) + if (previousTurns.isBlank()) "" else " Previous voice turns: $previousTurns"
-                val contextualMessage = context + " Current user message: " + message
+                failureStage = "build_request"
                 val body = JSONObject().put("conversationId", conversationId ?: JSONObject.NULL)
-                    .put("message", contextualMessage).put("attachmentIds", JSONArray())
+                    .put("message", message).put("attachmentIds", JSONArray())
                 var attempt = 0
                 while (true) {
+                    failureStage = "open_connection"
                     val conn = (URL(Prefs.serverUrl(this) + "/api/chat").openConnection() as HttpURLConnection).apply {
                         requestMethod = "POST"; connectTimeout = 15_000; readTimeout = 120_000; doOutput = true
                         setRequestProperty("Content-Type", "application/json; charset=utf-8")
                         setRequestProperty("Accept", "text/event-stream, application/json")
+                        // Share the authenticated WebView session with native voice chat.
+                        val sessionCookie = CookieManager.getInstance().getCookie(Prefs.serverUrl(this@VoiceAssistantService))
+                        if (!sessionCookie.isNullOrBlank()) setRequestProperty("Cookie", sessionCookie)
+                        Log.d(TAG, "Chat WebView session cookie present=${!sessionCookie.isNullOrBlank()}")
                     }
                     try {
+                        failureStage = "write_request"
                         conn.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
+                        failureStage = "read_http_status"
                         val status = conn.responseCode
-                        Log.i(TAG, "Chat HTTP status=" + status + " attempt=" + (attempt + 1))
+                        Log.i(TAG, "Chat HTTP status=" + status + " attempt=" + (attempt + 1) + " elapsedMs=" + (SystemClock.elapsedRealtime() - requestStartedAt))
                         if (status !in 200..299) {
                             val retryable = status == 429 || status == 502 || status == 503 || status == 504
                             if (retryable && attempt < 2) {
@@ -740,6 +1340,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         }
 
                         var streamError: String? = null
+                        failureStage = "read_response_stream"
                         conn.inputStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
                             lines.forEach { line ->
                                 val payload = line.trim().removePrefix("data:").trim()
@@ -783,11 +1384,23 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     } finally { conn.disconnect() }
                 }
                 if (answer.isBlank()) throw Exception("پاسخ متنی از سرور دریافت نشد")
+                failureStage = "save_assistant_turn"
                 memory.addTurn(voiceHistoryId, "assistant", answer)
             } catch (e: Exception) {
-                Log.e(TAG, "Chat request failed: ${e.javaClass.simpleName}")
+                val causeName = e.cause?.javaClass?.simpleName ?: "none"
+                Log.e(TAG, "Chat request failed stage=$failureStage type=${e.javaClass.simpleName} cause=$causeName")
                 failure = e.message ?: "ارتباط با سرور ناموفق بود"
-                memory.addTurn(voiceHistoryId, "assistant", "Error: ${e.javaClass.simpleName}")
+                try {
+                    memory.addTurn(voiceHistoryId, "assistant", "Error: ${e.javaClass.simpleName}")
+                } catch (memoryError: Exception) {
+                    Log.e(TAG, "Could not save chat error to memory type=${memoryError.javaClass.simpleName}")
+                }
+            } finally {
+                try {
+                    memory.close()
+                } catch (closeError: Exception) {
+                    Log.w(TAG, "Memory store close failed type=${closeError.javaClass.simpleName}")
+                }
             }
             handler.post {
                 busy = false
@@ -798,27 +1411,44 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
         }.apply { name = "raya-chat-request"; start() }
     }
 
-    private fun resumeListening() {
+    private fun resumeListening(expectedEpoch: Long? = null) {
+        if (expectedEpoch != null && expectedEpoch != speechEpoch) return
+        if (!speechPlaybackActive && busy) return
+        speechPlaybackActive = false
+        activeSpeechText = ""
         abandonSpeechAudioFocus()
         busy = false
         speechService?.setPause(false)
-        if (!destroyed && offlineRecognizer != null) startSherpaAudio()
-        else if (!destroyed && recognizer != null) startVoskAudio()
-        else if (!destroyed && speechService != null) setListeningCue(true)
+        val oneShotFinished = quickCaptureAwaitingReply
+        if (oneShotFinished) quickCaptureAwaitingReply = false
+        if (!destroyed && (!oneShotFinished || Prefs.isVoiceEnabled(this))) startAudioForCurrentMode()
         if (!destroyed) updateNotification("در حال شنیدن؛ برای شروع بگو رایا")
     }
     private fun foreground() {
         val nm = getSystemService(NotificationManager::class.java)
         if (Build.VERSION.SDK_INT >= 26) nm.createNotificationChannel(
-            NotificationChannel(CHANNEL, "مکالمه صوتی رایا", NotificationManager.IMPORTANCE_LOW))
+            NotificationChannel(CHANNEL, "\u0645\u06a9\u0627\u0644\u0645\u0647 \u0635\u0648\u062a\u06cc \u0631\u0627\u06cc\u0627", NotificationManager.IMPORTANCE_LOW))
         val open = PendingIntent.getActivity(this, 1, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 2, Intent(this, VoiceAssistantService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        startForeground(NOTIFICATION_ID, NotificationCompat.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_app).setContentTitle("دستیار صوتی رایا")
-            .setContentText("آماده‌سازی شنود فارسی…").setOngoing(true).setContentIntent(open)
-            .addAction(android.R.drawable.ic_media_pause, "توقف شنود", stop).build())
+        val builder = NotificationCompat.Builder(this, CHANNEL)
+            .setSmallIcon(R.drawable.ic_app).setContentTitle("\u062f\u0633\u062a\u06cc\u0627\u0631 \u0635\u0648\u062a\u06cc \u0631\u0627\u06cc\u0627")
+            .setContentText("\u0622\u0645\u0627\u062f\u0647\u200c\u0633\u0627\u0632\u06cc \u0634\u0646\u0648\u062f \u0641\u0627\u0631\u0633\u06cc\u2026")
+            .setOngoing(true).setContentIntent(open)
+        if (speechPlaybackActive) {
+            val interrupt = PendingIntent.getService(this, 3, Intent(this, VoiceAssistantService::class.java).setAction(ACTION_INTERRUPT),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            builder.addAction(android.R.drawable.ic_media_pause, "\u062a\u0648\u0642\u0641 \u0635\u062d\u0628\u062a \u0631\u0627\u06cc\u0627", interrupt)
+        }
+        if (ActivationMode.fromId(Prefs.activationMode(this)) == ActivationMode.MANUAL) {
+            val captureAction = if (manualCaptureActive) ACTION_STOP_CAPTURE else ACTION_START_CAPTURE
+            val captureLabel = if (manualCaptureActive) "\u062a\u0648\u0642\u0641 \u0634\u0646\u0648\u062f" else "\u0634\u0631\u0648\u0639 \u0634\u0646\u0648\u062f"
+            val capture = PendingIntent.getService(this, 4, Intent(this, VoiceAssistantService::class.java).setAction(captureAction), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            builder.addAction(android.R.drawable.ic_btn_speak_now, captureLabel, capture)
+        }
+        builder.addAction(android.R.drawable.ic_delete, "\u062a\u0648\u0642\u0641 \u0634\u0646\u0648\u062f", stop)
+        startForeground(NOTIFICATION_ID, builder.build())
     }
 
     private fun updateNotification(text: String) {
@@ -826,10 +1456,22 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val stop = PendingIntent.getService(this, 2, Intent(this, VoiceAssistantService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
-        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID,
-            NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_app)
-                .setContentTitle("دستیار صوتی رایا").setContentText(text).setOngoing(true)
-                .setContentIntent(open).addAction(android.R.drawable.ic_media_pause, "توقف شنود", stop).build())
+        val builder = NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_app)
+            .setContentTitle("\u062f\u0633\u062a\u06cc\u0627\u0631 \u0635\u0648\u062a\u06cc \u0631\u0627\u06cc\u0627").setContentText(text)
+            .setOngoing(true).setContentIntent(open)
+        if (speechPlaybackActive) {
+            val interrupt = PendingIntent.getService(this, 3, Intent(this, VoiceAssistantService::class.java).setAction(ACTION_INTERRUPT),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            builder.addAction(android.R.drawable.ic_media_pause, "\u062a\u0648\u0642\u0641 \u0635\u062d\u0628\u062a \u0631\u0627\u06cc\u0627", interrupt)
+        }
+        if (ActivationMode.fromId(Prefs.activationMode(this)) == ActivationMode.MANUAL) {
+            val captureAction = if (manualCaptureActive) ACTION_STOP_CAPTURE else ACTION_START_CAPTURE
+            val captureLabel = if (manualCaptureActive) "\u062a\u0648\u0642\u0641 \u0634\u0646\u0648\u062f" else "\u0634\u0631\u0648\u0639 \u0634\u0646\u0648\u062f"
+            val capture = PendingIntent.getService(this, 4, Intent(this, VoiceAssistantService::class.java).setAction(captureAction), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+            builder.addAction(android.R.drawable.ic_btn_speak_now, captureLabel, capture)
+        }
+        builder.addAction(android.R.drawable.ic_delete, "\u062a\u0648\u0642\u0641 \u0634\u0646\u0648\u062f", stop)
+        getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, builder.build())
     }
 
     override fun onDestroy() {

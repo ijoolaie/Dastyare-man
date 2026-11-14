@@ -9,6 +9,8 @@ import android.util.Log
 class ScreenControlAccessibilityService : AccessibilityService() {
     companion object {
         @Volatile private var active: ScreenControlAccessibilityService? = null
+        fun isActive(): Boolean = active != null
+
         fun lockScreen(): Boolean {
             if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) return false
             return try { active?.performGlobalAction(AccessibilityService.GLOBAL_ACTION_LOCK_SCREEN) == true }

@@ -3,9 +3,15 @@
     <string name="app_name">دستیار من</string>
     <string name="pair_subtitle">اتصال گوشی به دستیار شخصی هوشمند</string>
     <string name="hint_server">آدرس سرور (مثل https://…)</string>
+    <string name="hint_user">نام‌کاربری حساب</string>
+    <string name="hint_pass">رمز عبور حساب</string>
+    <string name="hint_pin">یا PIN ورود</string>
+    <string name="or_manual">اگر می‌خواهی، می‌توانی به‌جای ورود خودکار توکن دستگاه را دستی وارد کنی</string>
     <string name="hint_token">توکن دستگاه (dv_…)</string>
-    <string name="btn_connect">اتصال</string>
-    <string name="pair_help">توکن را از اپ وب «دستیار من» بگیر: جعبه‌ابزار › تب دستگاه‌ها › افزودن دستگاه جدید › گزینه «اپ اندروید». بعد از اتصال، در تنظیمات باتری اجازه بده اپ در پس‌زمینه بماند.</string>
+    <string name="btn_connect">ورود و اتصال خودکار</string>
+    <string name="pair_help">نام‌کاربری و رمز یا PIN حساب را وارد کن؛ رایا خودش وارد می‌شود و گوشی را بدون ساخت دستی توکن متصل می‌کند. اگر ورود خودکار در دسترس نبود، می‌توانی از توکن دستی استفاده کنی.</string>
     <string name="settings">تنظیمات</string>
     <string name="screen_control_accessibility_description">Allows Dastyar to lock the screen when you explicitly ask it to. It does not read screen content.</string>
+    <string name="listening_start">&#x0634;&#x0631;&#x0648;&#x0639; &#x0634;&#x0646;&#x0648;&#x062F;</string>
+    <string name="listening_stop">&#x062A;&#x0648;&#x0642;&#x0641; &#x0634;&#x0646;&#x0648;&#x062F;</string>
 </resources>
