@@ -378,7 +378,7 @@ class MainActivity : AppCompatActivity() {
 
                 val pairBody = JSONObject()
                     .put("os", "Android ${Build.VERSION.RELEASE} · اپ اختصاصی")
-                    .put("hostname", Build.MODEL)
+                    .put("hostname", "${Build.MODEL}-${Prefs.installId(this)}")
                     .put("capabilities", JSONArray(BridgeService.CAPS))
                 val pairConn = URL("$server/api/devices/auto-pair").openConnection() as HttpURLConnection
                 pairConn.requestMethod = "POST"
