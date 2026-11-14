@@ -1,0 +1,3 @@
+﻿
+## 2026-11-14 — Next handoff
+Current branch work adds stage-specific, privacy-safe diagnostics for native `/api/chat` failures and closes the request-scoped SQLite helper in `finally`. Version is 1.36 / code 37. Preserve app data during update. After CI succeeds, install with `adb install -r`; have the user perform a real spoken chat request, then inspect only sanitized stage/status logs. Do not infer the root cause until the new log identifies the failing stage. The previous `Chat WebView session cookie present=true` evidence remains valid, but no HTTP response was observed on that failing attempt. Check that `SQLiteConnectionPool` leak warnings stop. No PR merge, backend changes, or data reset.

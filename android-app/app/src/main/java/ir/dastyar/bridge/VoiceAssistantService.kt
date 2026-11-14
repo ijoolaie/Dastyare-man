@@ -161,6 +161,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             voiceHistoryId = UUID.randomUUID().toString()
             memory.setProfile("voice_local_history_id", voiceHistoryId)
         }
+        memory.close()
         loadModelAsync()
     }
 
@@ -896,9 +897,9 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                 val command = text.substring(alwaysWake.last + 1).trim()
                 if (!awaitingWakeCommand) {
                     voiceHistoryId = UUID.randomUUID().toString()
-                    RayaMemoryStore(this).setProfile("voice_local_history_id", voiceHistoryId)
+                    RayaMemoryStore(this).also { it.setProfile("voice_local_history_id", voiceHistoryId) }.close()
                     conversationId = null
-                    RayaMemoryStore(this).setProfile("voice_server_conversation_id", "")
+                    RayaMemoryStore(this).also { it.setProfile("voice_server_conversation_id", "") }.close()
                 }
                 activeUntil = now + SESSION_MS
                 if (command.isBlank()) {
@@ -953,9 +954,9 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             // can retrigger the wake word continuously.
             if (!awaitingWakeCommand) {
                 voiceHistoryId = UUID.randomUUID().toString()
-                RayaMemoryStore(this).setProfile("voice_local_history_id", voiceHistoryId)
+                RayaMemoryStore(this).also { it.setProfile("voice_local_history_id", voiceHistoryId) }.close()
                 conversationId = null
-                RayaMemoryStore(this).setProfile("voice_server_conversation_id", "")
+                RayaMemoryStore(this).also { it.setProfile("voice_server_conversation_id", "") }.close()
             }
             activeUntil = SystemClock.elapsedRealtime() + SESSION_MS
             if (command.isBlank()) {
@@ -1301,13 +1302,17 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
             Log.i(TAG, "Chat request started chars=${message.length}")
             var answer = ""
             var failure: String? = null
+            var failureStage = "create_memory_store"
             val memory = RayaMemoryStore(this)
             try {
+                failureStage = "save_user_turn"
                 memory.addTurn(voiceHistoryId, "user", message)
+                failureStage = "build_request"
                 val body = JSONObject().put("conversationId", conversationId ?: JSONObject.NULL)
                     .put("message", message).put("attachmentIds", JSONArray())
                 var attempt = 0
                 while (true) {
+                    failureStage = "open_connection"
                     val conn = (URL(Prefs.serverUrl(this) + "/api/chat").openConnection() as HttpURLConnection).apply {
                         requestMethod = "POST"; connectTimeout = 15_000; readTimeout = 120_000; doOutput = true
                         setRequestProperty("Content-Type", "application/json; charset=utf-8")
@@ -1318,7 +1323,9 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         Log.d(TAG, "Chat WebView session cookie present=${!sessionCookie.isNullOrBlank()}")
                     }
                     try {
+                        failureStage = "write_request"
                         conn.outputStream.use { it.write(body.toString().toByteArray(StandardCharsets.UTF_8)) }
+                        failureStage = "read_http_status"
                         val status = conn.responseCode
                         Log.i(TAG, "Chat HTTP status=" + status + " attempt=" + (attempt + 1) + " elapsedMs=" + (SystemClock.elapsedRealtime() - requestStartedAt))
                         if (status !in 200..299) {
@@ -1333,6 +1340,7 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                         }
 
                         var streamError: String? = null
+                        failureStage = "read_response_stream"
                         conn.inputStream.bufferedReader(StandardCharsets.UTF_8).useLines { lines ->
                             lines.forEach { line ->
                                 val payload = line.trim().removePrefix("data:").trim()
@@ -1376,11 +1384,23 @@ class VoiceAssistantService : Service(), TextToSpeech.OnInitListener {
                     } finally { conn.disconnect() }
                 }
                 if (answer.isBlank()) throw Exception("پاسخ متنی از سرور دریافت نشد")
+                failureStage = "save_assistant_turn"
                 memory.addTurn(voiceHistoryId, "assistant", answer)
             } catch (e: Exception) {
-                Log.e(TAG, "Chat request failed: ${e.javaClass.simpleName}")
+                val causeName = e.cause?.javaClass?.simpleName ?: "none"
+                Log.e(TAG, "Chat request failed stage=$failureStage type=${e.javaClass.simpleName} cause=$causeName")
                 failure = e.message ?: "ارتباط با سرور ناموفق بود"
-                memory.addTurn(voiceHistoryId, "assistant", "Error: ${e.javaClass.simpleName}")
+                try {
+                    memory.addTurn(voiceHistoryId, "assistant", "Error: ${e.javaClass.simpleName}")
+                } catch (memoryError: Exception) {
+                    Log.e(TAG, "Could not save chat error to memory type=${memoryError.javaClass.simpleName}")
+                }
+            } finally {
+                try {
+                    memory.close()
+                } catch (closeError: Exception) {
+                    Log.w(TAG, "Memory store close failed type=${closeError.javaClass.simpleName}")
+                }
             }
             handler.post {
                 busy = false
