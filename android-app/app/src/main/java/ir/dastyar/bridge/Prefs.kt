@@ -1,11 +1,13 @@
 package ir.dastyar.bridge
 
 import android.content.Context
+import java.util.UUID
 
 object Prefs {
     private const val FILE = "bridge_prefs"
     private const val KEY_SERVER = "server_url"
     private const val KEY_TOKEN = "device_token"
+    private const val KEY_INSTALL_ID = "install_id"
     private const val KEY_VOICE_ENABLED = "voice_enabled"
     private const val KEY_VOICE_MODEL = "voice_model"
     private const val KEY_VOICE_MODEL_MIGRATED = "voice_model_migrated_to_multilingual"
@@ -17,6 +19,16 @@ object Prefs {
     fun serverUrl(c: Context): String = sp(c).getString(KEY_SERVER, "") ?: ""
     fun token(c: Context): String = sp(c).getString(KEY_TOKEN, "") ?: ""
     fun isPaired(c: Context): Boolean = serverUrl(c).isNotEmpty() && token(c).isNotEmpty()
+
+    /** شناسه تصادفی و پایدار همین نصب؛ مدل گوشی به‌تنهایی بین چند گوشی یکتا نیست. */
+    fun installId(c: Context): String {
+        val prefs = sp(c)
+        val existing = prefs.getString(KEY_INSTALL_ID, null)
+        if (!existing.isNullOrBlank()) return existing
+        val created = UUID.randomUUID().toString()
+        prefs.edit().putString(KEY_INSTALL_ID, created).apply()
+        return created
+    }
     fun isVoiceEnabled(c: Context): Boolean = sp(c).getBoolean(KEY_VOICE_ENABLED, false)
     fun setVoiceEnabled(c: Context, enabled: Boolean) { sp(c).edit().putBoolean(KEY_VOICE_ENABLED, enabled).apply() }
     fun voiceModel(c: Context): String {
